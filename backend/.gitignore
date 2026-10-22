@@ -1,0 +1,41 @@
+# Build artifacts
+target/
+build/
+*.jar
+*.war
+*.nar
+*.ear
+*.class
+
+# Maven Wrapper runtime JAR
+.mvn/wrapper/maven-wrapper.jar
+
+# Environment and sensitive configuration files
+.env
+.env.*
+!.env.example
+*.local
+credentials.json
+secrets.properties
+
+# Logs
+logs/
+*.log
+
+# IDE and Editor configurations
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+.springBeans
+.sts4-cache
+.apt_generated
+
+# OS Files
+.DS_Store
+Thumbs.db
