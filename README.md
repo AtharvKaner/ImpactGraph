@@ -17,13 +17,17 @@ ImpactGraph/
 │   │   │   ├── java/com/impactgraph/
 │   │   │   │   ├── ImpactGraphApplication.java # Spring Boot entry point
 │   │   │   │   ├── config/WebConfig.java       # CORS configuration
-│   │   │   │   └── controller/HealthController.java # /api/health endpoint
+│   │   │   │   ├── controller/                 # REST Controllers (Health, Project, Service, Api, Dependency)
+│   │   │   │   ├── dto/                        # Request and Response DTOs
+│   │   │   │   ├── entity/                     # Domain Entities (Project, Service, Api, Dependency)
+│   │   │   │   ├── exception/                  # Global Exception Handling & Custom Exceptions
+│   │   │   │   ├── graph/                      # DependencyGraph, CycleDetector, ImpactAnalyzer
+│   │   │   │   ├── repository/                 # Spring Data Repositories
+│   │   │   │   └── service/                    # Business Service Layer & Graph Bridge
 │   │   │   └── resources/
 │   │   │       └── application.properties      # PostgreSQL config via env vars
 │   │   └── test/
-│   │       ├── java/com/impactgraph/
-│   │       │   ├── ImpactGraphApplicationTests.java
-│   │       │   └── controller/HealthControllerTest.java
+│   │       ├── java/com/impactgraph/           # Unit, Integration & Compatibility Tests
 │   │       └── resources/
 │   │           └── application.properties      # In-memory test DB config
 │   ├── .env.example               # Backend environment variable template
@@ -187,10 +191,148 @@ Open two PowerShell terminals: one for the backend and one for the frontend.
 
 ---
 
+## Core Data Model & REST Endpoints
+
+The backend exposes a fully validated CRUD API for modeling architectural entities. JPA domain models are fully decoupled from REST DTOs.
+
+### Direction Convention
+> **Important:** Directed dependency edges follow the standard graph convention:
+> **`A -> B` means Service A depends on Service B** (Service A is the dependent, Service B is the dependency).
+
+### Endpoints Overview
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/health` | Service health status check |
+| `POST` | `/api/projects` | Create a new project |
+| `GET` | `/api/projects` | List all projects |
+| `GET` | `/api/projects/{id}` | Get project by ID |
+| `PUT` | `/api/projects/{id}` | Update project |
+| `DELETE` | `/api/projects/{id}` | Delete project (cascades dependencies & services) |
+| `GET` | `/api/projects/{id}/services` | List all services belonging to a project |
+| `GET` | `/api/projects/{id}/dependencies` | List all dependencies belonging to a project |
+| `POST` | `/api/services` | Create a service under a project |
+| `GET` | `/api/services` | List services (optional `?projectId={id}` filter) |
+| `GET` | `/api/services/{id}` | Get service by ID |
+| `PUT` | `/api/services/{id}` | Update service |
+| `DELETE` | `/api/services/{id}` | Delete service (cascades related dependencies & APIs) |
+| `GET` | `/api/services/{id}/apis` | List all APIs exposed by a service |
+| `POST` | `/api/apis` | Create an API endpoint under a service |
+| `GET` | `/api/apis` | List APIs (optional `?serviceId={id}` filter) |
+| `GET` | `/api/apis/{id}` | Get API by ID |
+| `PUT` | `/api/apis/{id}` | Update API |
+| `DELETE` | `/api/apis/{id}` | Delete API |
+| `POST` | `/api/dependencies` | Register a dependency between two services |
+| `GET` | `/api/dependencies` | List dependencies (supports `?projectId=`, `?sourceServiceId=`, `?targetServiceId=`) |
+| `GET` | `/api/dependencies/{id}` | Get dependency by ID |
+| `PUT` | `/api/dependencies/{id}` | Update dependency |
+| `DELETE` | `/api/dependencies/{id}` | Delete dependency |
+
+### Example Payloads
+
+#### 1. Create Project (`POST /api/projects`)
+**Request:**
+```json
+{
+  "name": "E-Commerce System",
+  "description": "Retail microservices architecture"
+}
+```
+**Response (`201 Created`):**
+```json
+{
+  "id": 1,
+  "name": "E-Commerce System",
+  "description": "Retail microservices architecture",
+  "createdAt": "2026-10-24T10:00:00Z",
+  "serviceCount": 0
+}
+```
+
+#### 2. Create Service (`POST /api/services`)
+**Request:**
+```json
+{
+  "projectId": 1,
+  "name": "OrderService",
+  "description": "Manages customer orders and checkout workflows"
+}
+```
+**Response (`201 Created`):**
+```json
+{
+  "id": 1,
+  "projectId": 1,
+  "projectName": "E-Commerce System",
+  "name": "OrderService",
+  "description": "Manages customer orders and checkout workflows",
+  "apiCount": 0
+}
+```
+
+#### 3. Create API (`POST /api/apis`)
+**Request:**
+```json
+{
+  "serviceId": 1,
+  "name": "Create Order",
+  "method": "POST",
+  "path": "/orders",
+  "description": "Places a new order"
+}
+```
+**Response (`201 Created`):**
+```json
+{
+  "id": 1,
+  "serviceId": 1,
+  "serviceName": "OrderService",
+  "name": "Create Order",
+  "method": "POST",
+  "path": "/orders",
+  "description": "Places a new order"
+}
+```
+
+#### 4. Create Dependency (`POST /api/dependencies`)
+> *Direction:* `OrderService` (source: 1) depends on `PaymentService` (target: 2).
+**Request:**
+```json
+{
+  "sourceServiceId": 1,
+  "targetServiceId": 2,
+  "dependencyType": "REST",
+  "description": "OrderService calls PaymentService charge endpoint synchronously"
+}
+```
+**Response (`201 Created`):**
+```json
+{
+  "id": 1,
+  "projectId": 1,
+  "sourceServiceId": 1,
+  "sourceServiceName": "OrderService",
+  "targetServiceId": 2,
+  "targetServiceName": "PaymentService",
+  "dependencyType": "REST",
+  "description": "OrderService calls PaymentService charge endpoint synchronously",
+  "direction": "OrderService -> PaymentService"
+}
+```
+
+### Data Integrity & Validation Rules
+- **Self-Dependencies Rejected (`400 Bad Request`):** Source service and target service cannot be identical.
+- **Duplicate Dependencies Rejected (`409 Conflict`):** Exactly one dependency relationship is permitted per `(sourceServiceId, targetServiceId)` pair.
+- **Cross-Project Dependencies Rejected (`400 Bad Request`):** Services must belong to the exact same project to declare dependencies between them.
+- **Parent Resource Validation (`404 Not Found`):** Services, APIs, and Dependencies must reference existing projects/services.
+- **HTTP Method & Path Validation (`400 Bad Request`):** API methods must be valid (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`) and paths must start with `/`.
+
+---
+
 ## Verification & Validation
 
 Both test suites and builds have been verified:
-- **Backend Tests:** `HealthControllerTest` and `ImpactGraphApplicationTests` pass with `0 errors, 0 failures`.
+- **Backend Tests:** 71 automated tests pass with `0 errors, 0 failures` (covering CRUD, validation rules, cross-project checks, self-dependency rejection, duplicate detection, graph engine compatibility, and health check preservation).
 - **Frontend Build:** `vite build` and `oxlint` compile with `0 warnings, 0 errors`.
 
 ---
@@ -198,5 +340,5 @@ Both test suites and builds have been verified:
 ## Roadmap
 
 - **Milestone 1 (Complete):** Initial runnable skeleton, environment-based configuration, health check endpoint, React UI.
-- **Milestone 2:** CNS Security implementation (Authentication, Authorization, RBAC, and Audit Logging).
+- **Milestone 2 (In Progress):** Core Backend & Data Model (Projects, Services, APIs, Dependencies, Integrity Constraints), CNS Security.
 - **Milestone 3:** Core Software Change Impact Analysis engine, AST/dependency parsing, and React Flow graph visualization.
