@@ -41,15 +41,15 @@ class ProjectControllerTest {
     @Autowired
     private DependencyRepository dependencyRepository;
 
+    @Autowired
+    private org.springframework.web.context.WebApplicationContext context;
+
     @BeforeEach
     void setUp() {
         dependencyRepository.deleteAll();
         projectRepository.deleteAll();
 
-        ProjectController controller = new ProjectController(projectService, serviceService, dependencyService);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
-                .setControllerAdvice(new GlobalExceptionHandler())
-                .build();
+        mockMvc = MockMvcBuilders.webAppContextSetup(context).build();
     }
 
     @Test
@@ -120,6 +120,16 @@ class ProjectControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value(409))
                 .andExpect(jsonPath("$.message").value(containsString("already exists")));
+    }
+
+    @Test
+    @DisplayName("GET /api/projects - Should return 200 OK and empty array through ApplicationContext when no projects exist")
+    void testGetAllProjects_emptyListThroughApplicationContext() throws Exception {
+        mockMvc.perform(get("/api/projects")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$", hasSize(0)));
     }
 
     @Test
