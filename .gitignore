@@ -1,0 +1,47 @@
+# =============================================================================
+# ImpactGraph .gitignore
+# =============================================================================
+
+# --- Java / Maven ---
+backend/target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+hs_err_pid*
+
+# --- Maven Wrapper (keep the wrapper, ignore downloaded jars) ---
+backend/.mvn/wrapper/maven-wrapper.jar
+
+# --- IDE ---
+.idea/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+.vscode/
+*.swp
+*.swo
+*~
+.factorypath
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Environment / Secrets ---
+.env
+*.env.local
+
+# --- Node / Frontend ---
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+
+# --- Antigravity / Gemini ---
+.agents/
+.gemini/
