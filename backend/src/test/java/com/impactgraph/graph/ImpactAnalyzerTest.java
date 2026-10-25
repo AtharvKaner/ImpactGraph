@@ -267,6 +267,38 @@ class ImpactAnalyzerTest {
         assertFalse(result.isAffected("SelfRefService"));
     }
 
+    @Test
+    @DisplayName("Scenario 7 (Cycle Returning to Target): Cycle returning to changed service never counts target as affected")
+    void testScenario7_CycleReturningToChangedTarget() {
+        // Payment depends on Notification, and Notification depends on Payment (2-cycle)
+        // Order also depends on Payment
+        graph.addService("Payment Service");
+        graph.addService("Notification Service");
+        graph.addService("Order Service");
+
+        graph.addDependency("Payment Service", "Notification Service");
+        graph.addDependency("Notification Service", "Payment Service");
+        graph.addDependency("Order Service", "Payment Service");
+
+        // When Payment Service changes:
+        // Dependents are Notification Service (direct) and Order Service (direct)
+        // Notification Service's dependent is Payment Service, which is the changed target!
+        ImpactAnalysisResult result = analyzer.analyzeImpact(graph, "Payment Service");
+
+        assertEquals("Payment Service", result.changedServiceId());
+        assertEquals(2, result.getAffectedCount());
+        assertEquals(Set.of("Notification Service", "Order Service"), result.affectedServiceIds());
+        assertEquals(Set.of("Notification Service", "Order Service"), result.getDirectAffectedServices());
+        assertTrue(result.getTransitiveAffectedServices().isEmpty());
+
+        // Target must NEVER be counted as its own affected service
+        assertFalse(result.isAffected("Payment Service"), "Payment Service cannot be affected by itself");
+        assertFalse(result.affectedServiceIds().contains("Payment Service"));
+        assertFalse(result.getDirectAffectedServices().contains("Payment Service"));
+        assertFalse(result.getTransitiveAffectedServices().contains("Payment Service"));
+        assertTrue(result.getImpactPath("Payment Service").isEmpty());
+    }
+
     /**
      * Scenario 8: Duplicate dependency edges.
      */

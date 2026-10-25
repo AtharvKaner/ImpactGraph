@@ -21,8 +21,13 @@ public record ImpactAnalysisResult(
             throw new InvalidServiceIdException("Changed service ID cannot be null or blank");
         }
         changedServiceId = changedServiceId.trim();
-        affectedServiceIds = Collections.unmodifiableSet(new TreeSet<>(affectedServiceIds));
-        impactPaths = Collections.unmodifiableMap(new LinkedHashMap<>(impactPaths));
+        Set<String> cleanAffected = new TreeSet<>(affectedServiceIds);
+        cleanAffected.remove(changedServiceId);
+        affectedServiceIds = Collections.unmodifiableSet(cleanAffected);
+
+        Map<String, ImpactPath> cleanPaths = new LinkedHashMap<>(impactPaths);
+        cleanPaths.remove(changedServiceId);
+        impactPaths = Collections.unmodifiableMap(cleanPaths);
     }
 
     /**

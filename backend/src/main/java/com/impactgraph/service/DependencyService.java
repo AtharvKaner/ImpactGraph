@@ -193,4 +193,27 @@ public class DependencyService {
         }
         return builder.build();
     }
+
+    /**
+     * Resolves a service identifier (either numeric service ID or service name)
+     * to the exact service name registered in the project's dependency graph.
+     *
+     * @param projectId         ID of the project
+     * @param serviceIdentifier service name or numeric service ID string
+     * @return canonical service name if found, or the trimmed identifier if not matched
+     */
+    @Transactional(readOnly = true)
+    public String resolveServiceName(Long projectId, String serviceIdentifier) {
+        if (serviceIdentifier == null || serviceIdentifier.isBlank()) {
+            return serviceIdentifier;
+        }
+        String trimmed = serviceIdentifier.trim();
+        List<com.impactgraph.entity.Service> services = serviceRepository.findByProjectId(projectId);
+        for (com.impactgraph.entity.Service svc : services) {
+            if (svc.getName().equalsIgnoreCase(trimmed) || String.valueOf(svc.getId()).equals(trimmed)) {
+                return svc.getName();
+            }
+        }
+        return trimmed;
+    }
 }

@@ -1,170 +1,435 @@
-import { useState, useEffect } from 'react'
-import './App.css'
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+import { useState, useEffect, useCallback } from 'react';
+import { DATASET_PRESETS } from './data/mockServicesData';
+import {
+  fetchServiceGraph,
+  fetchProjects,
+  fetchProjectGraph,
+  analyzeChangeImpact,
+  checkBackendHealth,
+  API_BASE_URL,
+} from './services/impactService';
+import { TopNav } from './components/TopNav';
+import { Sidebar } from './components/Sidebar';
+import { CycleIndicator } from './components/CycleIndicator';
+import { ServiceSelector } from './components/ServiceSelector';
+import { GraphView } from './components/GraphView';
+import { ImpactPanel } from './components/ImpactPanel';
+import { BackendStatusModal } from './components/BackendStatusModal';
+import { ServicesDirectoryModal } from './components/ServicesDirectoryModal';
+import './App.css';
 
 function App() {
-  const [healthData, setHealthData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [lastChecked, setLastChecked] = useState(null)
+  // Backend health status state
+  const [healthData, setHealthData] = useState(null);
+  const [backendLoading, setBackendLoading] = useState(true);
+  const [backendError, setBackendError] = useState(null);
+  const [lastChecked, setLastChecked] = useState(null);
 
-  const checkHealth = async () => {
-    setLoading(true)
-    setError(null)
-    const endpoint = `${API_BASE_URL}/api/health`
+  // Persisted projects state
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+
+  // Impact analysis dashboard state
+  const [currentPreset, setCurrentPreset] = useState(DATASET_PRESETS.ECOMMERCE_DAG);
+  const [graphData, setGraphData] = useState(null);
+
+  // Proposed change target vs executed analysis target
+  const [proposedServiceId, setProposedServiceId] = useState('Order Service');
+  const [analyzedServiceId, setAnalyzedServiceId] = useState(null);
+  const [impactResult, setImpactResult] = useState(null);
+  const [impactLoading, setImpactLoading] = useState(false);
+
+  // Server error banner state (e.g. HTTP 400 or 404 responses)
+  const [apiError, setApiError] = useState(null);
+
+  // UI state for navigation and modals
+  const [activeNav, setActiveNav] = useState('dashboard');
+  const [isBackendModalOpen, setIsBackendModalOpen] = useState(false);
+  const [isServicesModalOpen, setIsServicesModalOpen] = useState(false);
+
+  // Primary Health Check function (e.g. for user refresh button)
+  const checkHealth = useCallback(async () => {
+    setBackendLoading(true);
+    setBackendError(null);
 
     try {
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        }
-      })
+      const data = await checkBackendHealth({ timeout: 4000 });
+      setHealthData(data);
+      setBackendError(null);
 
-      if (!response.ok) {
-        throw new Error(`Backend responded with HTTP status ${response.status} (${response.statusText})`)
-      }
-
-      const data = await response.json()
-      setHealthData(data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to connect to backend server')
-      setHealthData(null)
-    } finally {
-      setLoading(false)
-      setLastChecked(new Date().toLocaleTimeString())
-    }
-  }
-
-  useEffect(() => {
-    let ignore = false
-    const fetchInitialStatus = async () => {
+      // Refresh persisted projects list when backend is accessible
       try {
-        const response = await fetch(`${API_BASE_URL}/api/health`, {
-          headers: { 'Accept': 'application/json' }
-        })
-        if (!response.ok) {
-          throw new Error(`Backend responded with HTTP status ${response.status} (${response.statusText})`)
-        }
-        const data = await response.json()
+        const projectsList = await fetchProjects({ timeout: 4000 });
+        setProjects(projectsList);
+      } catch {
+        // Non-fatal if project listing fails
+      }
+    } catch (err) {
+      setBackendError(
+        err instanceof Error ? err.message : 'Failed to connect to backend server'
+      );
+      setHealthData(null);
+    } finally {
+      setBackendLoading(false);
+      setLastChecked(new Date().toLocaleTimeString());
+    }
+  }, []);
+
+  // Initial backend check and projects loading on mount
+  useEffect(() => {
+    let ignore = false;
+    async function initHealth() {
+      try {
+        const data = await checkBackendHealth({ timeout: 4000 });
         if (!ignore) {
-          setHealthData(data)
-          setLoading(false)
-          setLastChecked(new Date().toLocaleTimeString())
+          setHealthData(data);
+          setBackendError(null);
+        }
+
+        try {
+          const projectsList = await fetchProjects({ timeout: 4000 });
+          if (!ignore) {
+            setProjects(projectsList);
+          }
+        } catch {
+          // Non-fatal if project listing fails
         }
       } catch (err) {
         if (!ignore) {
-          setError(err instanceof Error ? err.message : 'Failed to connect to backend server')
-          setHealthData(null)
-          setLoading(false)
-          setLastChecked(new Date().toLocaleTimeString())
+          setBackendError(
+            err instanceof Error ? err.message : 'Failed to connect to backend server'
+          );
+          setHealthData(null);
+        }
+      } finally {
+        if (!ignore) {
+          setBackendLoading(false);
+          setLastChecked(new Date().toLocaleTimeString());
         }
       }
     }
 
-    fetchInitialStatus()
+    initHealth();
     return () => {
-      ignore = true
+      ignore = true;
+    };
+  }, []);
+
+  // Load graph topology whenever the preset or selected project changes
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadGraph() {
+      try {
+        if (selectedProjectId != null) {
+          const data = await fetchProjectGraph(selectedProjectId, {
+            signal: controller.signal,
+            timeout: 5000,
+          });
+          setGraphData(data);
+          setApiError(null);
+
+          // Update proposed service selection for the loaded project
+          if (data.services && data.services.length > 0) {
+            setProposedServiceId((prev) => {
+              const exists = data.services.some((s) => s.id === prev);
+              return exists ? prev : data.services[0].id;
+            });
+          } else {
+            setProposedServiceId('');
+          }
+        } else {
+          const data = await fetchServiceGraph(currentPreset, {
+            signal: controller.signal,
+            timeout: 5000,
+          });
+          setGraphData(data);
+          setApiError(null);
+
+          if (data.services && data.services.length > 0) {
+            setProposedServiceId((prev) => {
+              const exists = data.services.some((s) => s.id === prev);
+              return exists ? prev : data.services[0].id;
+            });
+          }
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          setApiError(err.message || 'Failed to load graph topology from backend');
+          if (selectedProjectId != null) {
+            setGraphData(null);
+            setProposedServiceId('');
+          }
+        }
+      }
     }
-  }, [])
+
+    loadGraph();
+
+    return () => {
+      controller.abort();
+    };
+  }, [currentPreset, selectedProjectId]);
+
+  // Execute explicit change impact analysis
+  const handleAnalyze = useCallback(async () => {
+    if (!proposedServiceId) {
+      return;
+    }
+
+    setImpactLoading(true);
+    setApiError(null);
+
+    try {
+      const result = await analyzeChangeImpact(proposedServiceId, currentPreset, {
+        projectId: selectedProjectId,
+        timeout: 5000,
+      });
+      setImpactResult(result);
+      setAnalyzedServiceId(proposedServiceId);
+      setApiError(null);
+    } catch (err) {
+      setApiError(err.message || 'Impact analysis request failed');
+      setImpactResult(null);
+      setAnalyzedServiceId(null);
+    } finally {
+      setImpactLoading(false);
+    }
+  }, [proposedServiceId, currentPreset, selectedProjectId]);
+
+  // If already analyzed and user toggles architecture preset, re-evaluate automatically
+  useEffect(() => {
+    if (!analyzedServiceId) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let ignore = false;
+
+    async function reAnalyze() {
+      setImpactLoading(true);
+      try {
+        const result = await analyzeChangeImpact(analyzedServiceId, currentPreset, {
+          projectId: selectedProjectId,
+          signal: controller.signal,
+          timeout: 5000,
+        });
+        if (!ignore) {
+          setImpactResult(result);
+          setApiError(null);
+        }
+      } catch (err) {
+        if (!ignore && err.name !== 'AbortError') {
+          setApiError(err.message || 'Impact analysis request failed');
+        }
+      } finally {
+        if (!ignore) {
+          setImpactLoading(false);
+        }
+      }
+    }
+
+    reAnalyze();
+
+    return () => {
+      ignore = true;
+      controller.abort();
+    };
+  }, [currentPreset, selectedProjectId, analyzedServiceId]);
+
+  // Handle service selection (from dropdown, graph node click, or suggested scenario chips)
+  const handleSelectService = useCallback(
+    (serviceId) => {
+      setProposedServiceId(serviceId);
+      if (serviceId !== analyzedServiceId) {
+        setAnalyzedServiceId(null);
+        setImpactResult(null);
+        setApiError(null);
+      }
+    },
+    [analyzedServiceId]
+  );
+
+  const handlePresetChange = (preset) => {
+    setSelectedProjectId(null);
+    setCurrentPreset(preset);
+    setAnalyzedServiceId(null);
+    setImpactResult(null);
+    setApiError(null);
+  };
+
+  const handleSelectProject = (projectId) => {
+    setSelectedProjectId(projectId);
+    setAnalyzedServiceId(null);
+    setImpactResult(null);
+    setApiError(null);
+  };
+
+  const handleNavClick = (navKey) => {
+    setActiveNav(navKey);
+    if (navKey === 'dashboard') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (navKey === 'impact') {
+      const el = document.querySelector('.impact-panel-card');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (navKey === 'topology') {
+      const el = document.querySelector('.topology-health-card');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const services = graphData?.services || [];
+  const dependencies = graphData?.dependencies || [];
+  const isDemoFallback = Boolean(graphData?.isFallback || impactResult?.isFallback);
 
   return (
-    <div className="impactgraph-container">
-      <header className="header">
-        <div className="logo-badge">IG</div>
-        <div className="header-text">
-          <h1 className="title">ImpactGraph</h1>
-          <p className="subtitle">Software Change Impact Analysis</p>
-        </div>
-      </header>
+    <div className="app-shell">
+      {/* 1. Compact Top Navigation Bar */}
+      <TopNav
+        services={services}
+        selectedServiceId={proposedServiceId}
+        onSelectService={handleSelectService}
+        healthData={healthData}
+        backendLoading={backendLoading}
+        onRefresh={checkHealth}
+        onOpenBackendDetails={() => setIsBackendModalOpen(true)}
+        isDemoFallback={isDemoFallback}
+      />
 
-      <main className="content">
-        <section className="status-card">
-          <div className="card-header">
-            <h2>Backend System Status</h2>
-            <button
-              className="refresh-btn"
-              onClick={checkHealth}
-              disabled={loading}
-            >
-              {loading ? 'Checking...' : 'Refresh Status'}
-            </button>
+      <div className="app-body-container">
+        {/* 2. Slim Left Sidebar */}
+        <Sidebar
+          activeNav={activeNav}
+          onSelectNav={handleNavClick}
+          onOpenSettings={() => setIsBackendModalOpen(true)}
+          onOpenServicesModal={() => setIsServicesModalOpen(true)}
+        />
+
+        {/* 3. Main Dashboard Workspace */}
+        <main className="main-workspace">
+          {/* Main heading */}
+          <div className="main-header-block">
+            <h1 className="main-title">Software Change Impact Analysis</h1>
+            <p className="main-desc">
+              Simulate service modifications against demonstration architectures or persisted PostgreSQL projects to calculate blast radius and detect circular dependencies.
+            </p>
           </div>
 
-          <div className="status-indicator-section">
-            <div className="status-indicator">
-              <span
-                className={`status-dot ${
-                  loading ? 'loading' : healthData ? 'up' : 'down'
-                }`}
-              />
-              <span className="status-text">
-                {loading
-                  ? 'Connecting to backend...'
-                  : healthData
-                  ? 'Backend Reachable (UP)'
-                  : 'Backend Unreachable (DOWN)'}
-              </span>
-            </div>
-            {lastChecked && (
-              <span className="timestamp-note">Last evaluated: {lastChecked}</span>
-            )}
-          </div>
-
-          <div className="status-details">
-            <div className="detail-row">
-              <span className="detail-label">Endpoint:</span>
-              <code className="detail-value">{API_BASE_URL}/api/health</code>
-            </div>
-
-            {healthData && (
-              <>
-                <div className="detail-row">
-                  <span className="detail-label">Service:</span>
-                  <span className="detail-value">{healthData.service}</span>
-                </div>
-                <div className="detail-row">
-                  <span className="detail-label">Reported Status:</span>
-                  <span className="detail-value badge-success">{healthData.status}</span>
-                </div>
-                <div className="detail-row">
-                  <span className="detail-label">Server Timestamp:</span>
-                  <span className="detail-value">{healthData.timestamp}</span>
-                </div>
-              </>
-            )}
-
-            {error && (
-              <div className="error-box">
-                <p className="error-title">Connection Error</p>
-                <p className="error-message">{error}</p>
-                <p className="error-help">
-                  Ensure the Spring Boot backend is running on <code>{API_BASE_URL}</code>.
-                  <br />
-                  Run command in <code>./backend</code>: <code>.\mvnw.cmd spring-boot:run</code>
-                </p>
+          {/* Honest Demo Fallback Notification Banner */}
+          {isDemoFallback && !selectedProjectId && (
+            <div className="demo-fallback-banner" role="status">
+              <div className="demo-banner-left">
+                <span className="demo-banner-badge">Offline Demo</span>
+                <span>
+                  Backend server is offline or unreachable. Displaying local demonstration dataset.
+                </span>
               </div>
+              <button
+                type="button"
+                className="demo-banner-retry-btn"
+                onClick={checkHealth}
+                title="Retry connecting to live Spring Boot backend"
+              >
+                Retry Connection
+              </button>
+            </div>
+          )}
+
+          {/* Explicit Server Error Banner (e.g. 400 Bad Request, 404 Not Found) */}
+          {apiError && (
+            <div className="api-error-banner" role="alert">
+              <div className="api-error-left">
+                <span className="api-error-badge">API Error</span>
+                <span>{apiError}</span>
+              </div>
+              <button
+                type="button"
+                className="api-error-close-btn"
+                onClick={() => setApiError(null)}
+                aria-label="Dismiss error"
+              >
+                &times;
+              </button>
+            </div>
+          )}
+
+          {/* 4. Compact Topology Health Summary */}
+          <CycleIndicator
+            cycleResult={
+              impactResult?.cycleResult || {
+                hasCycle: graphData?.hasCycle,
+                cycles: graphData?.cycles || graphData?.cycleDetails || [],
+              }
+            }
+            presetName={graphData?.name || 'Loading topology...'}
+          />
+
+          {/* 5. Control Bar: Architecture Setup + Simulated Software Change */}
+          <ServiceSelector
+            services={services}
+            proposedServiceId={proposedServiceId}
+            onSelectService={handleSelectService}
+            onAnalyze={handleAnalyze}
+            currentPreset={currentPreset}
+            onChangePreset={handlePresetChange}
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={handleSelectProject}
+            loading={impactLoading}
+            hasAnalyzed={Boolean(
+              impactResult && analyzedServiceId && analyzedServiceId === proposedServiceId
             )}
+            edgeCount={dependencies.length}
+            hasCycle={graphData?.hasCycle}
+          />
+
+          {/* 6 & 7. Large Service Dependency Graph + Clean Impact Analysis Panel */}
+          <div className="dashboard-grid">
+            <GraphView
+              services={services}
+              dependencies={dependencies}
+              proposedServiceId={proposedServiceId}
+              analyzedServiceId={analyzedServiceId}
+              impactResult={impactResult}
+              onNodeClick={handleSelectService}
+            />
+
+            <ImpactPanel
+              proposedServiceId={proposedServiceId}
+              analyzedServiceId={analyzedServiceId}
+              services={services}
+              impactResult={impactResult}
+              loading={impactLoading}
+              onAnalyze={handleAnalyze}
+              onSelectService={handleSelectService}
+              currentPresetName={graphData?.name}
+            />
           </div>
-        </section>
+        </main>
+      </div>
 
-        <section className="info-card">
-          <h3>Project Skeleton - Milestone 1</h3>
-          <ul className="info-list">
-            <li><strong>Backend:</strong> Java 21, Spring Boot, Maven Wrapper, Spring Data JPA, PostgreSQL</li>
-            <li><strong>Security Configuration:</strong> DB secrets externalized to environment variables</li>
-            <li><strong>Frontend:</strong> React 19, Vite, React Flow (@xyflow/react)</li>
-            <li><strong>Verification:</strong> Health-check verified via JUnit 5 & Mockito test suite</li>
-          </ul>
-        </section>
-      </main>
+      {/* Backend Health Status & Details Modal */}
+      <BackendStatusModal
+        isOpen={isBackendModalOpen}
+        onClose={() => setIsBackendModalOpen(false)}
+        healthData={healthData}
+        loading={backendLoading}
+        error={backendError}
+        onRefresh={checkHealth}
+        lastChecked={lastChecked}
+        apiBaseUrl={API_BASE_URL}
+      />
 
-      <footer className="footer">
-        <p>ImpactGraph &bull; Milestone 1: Runnable Project Skeleton</p>
-      </footer>
+      {/* Services Directory Modal */}
+      <ServicesDirectoryModal
+        isOpen={isServicesModalOpen}
+        onClose={() => setIsServicesModalOpen(false)}
+        services={services}
+        selectedServiceId={proposedServiceId}
+        onSelectService={handleSelectService}
+      />
     </div>
-  )
+  );
 }
 
-export default App
+export default App;

@@ -87,21 +87,24 @@ Before running the project on Windows, verify that the following prerequisites a
 
 ## Environment Variables
 
-Database credentials and secrets are **strictly externalized** and not hardcoded into configuration files.
+Database credentials and secrets are **strictly externalized** and never hardcoded in repository files.
 
 | Variable Name | Default Value | Description |
 |---|---|---|
 | `DB_HOST` | `localhost` | PostgreSQL host |
 | `DB_PORT` | `5432` | PostgreSQL port |
-| `DB_NAME` | `impactgraph` | PostgreSQL database name |
-| `DB_USERNAME` | `postgres` | Database username |
-| `DB_PASSWORD` | *(empty)* | Database password |
-| `SPRING_DATASOURCE_URL` | *(derived from DB_HOST/PORT/NAME)* | Full JDBC URL override |
+| `DB_NAME` | `impactgraph` | PostgreSQL database name (default: `impactgraph`) |
+| `DB_USERNAME` | `postgres` | Database username (default: `postgres`) |
+| `DB_PASSWORD` | *(none / empty)* | **Required** for local PostgreSQL if SCRAM-SHA-256 auth is enabled |
+| `SPRING_DATASOURCE_PASSWORD` | *(falls back to DB_PASSWORD)* | Alternative Spring Boot datasource password variable |
+| `SPRING_DATASOURCE_URL` | *(derived from DB_HOST/PORT/NAME)* | Full JDBC URL override (e.g. `jdbc:postgresql://localhost:5432/impactgraph`) |
 | `PORT` | `8080` | Backend HTTP server port |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:3000` | Allowed frontend origins |
 | `VITE_API_BASE_URL` | `http://localhost:8080` | Frontend backend API target |
 
-A template is provided in both `.env.example` and `backend/.env.example`.
+Templates are provided in `.env.example` (root) and `backend/.env.example`.
+
+Spring Boot automatically supports loading local `.env` files via `spring.config.import=optional:file:.env[.properties],optional:file:../.env[.properties]`. All `.env` files are strictly excluded in `.gitignore`.
 
 ---
 
@@ -116,34 +119,51 @@ Open two PowerShell terminals: one for the backend and one for the frontend.
    cd backend
    ```
 
-2. **Run backend automated tests (JUnit + Mockito):**
+2. **Run backend automated tests (JUnit + Mockito with in-memory H2):**
    ```powershell
    .\mvnw.cmd clean test
    ```
+   *Note: Tests run completely in-memory and do not require PostgreSQL or external credentials.*
 
-3. **(Optional) Package the backend executable JAR:**
+3. **Configure PostgreSQL credentials before running the application:**
+
+   If your local PostgreSQL server uses SCRAM authentication, providing no password will trigger:
+   `The server requested SCRAM-based authentication, but no password was provided.`
+
+   Choose **either** of the two safe approaches below:
+
+   **Option A: Set session environment variable in PowerShell (Recommended)**
    ```powershell
-   .\mvnw.cmd package -DskipTests
+   $env:DB_PASSWORD = "your_actual_postgres_password"
    ```
-
-4. **Set environment variables (if running against local PostgreSQL):**
+   *(Optionally override defaults if your database name, user, or port differ:)*
    ```powershell
-   $env:DB_HOST = "localhost"
-   $env:DB_PORT = "5432"
    $env:DB_NAME = "impactgraph"
    $env:DB_USERNAME = "postgres"
-   $env:DB_PASSWORD = "your_postgres_password"
+   $env:DB_HOST = "localhost"
+   $env:DB_PORT = "5432"
    ```
 
-   *(In Command Prompt `cmd.exe`, use `set DB_PASSWORD=your_postgres_password` instead.)*
+   **Option B: Use a gitignored local `.env` file**
+   ```powershell
+   # From the backend directory:
+   Copy-Item .env.example .env
+   # Or from the project root:
+   # Copy-Item ..\.env.example ..\.env
+   ```
+   Open the created `.env` file and set your local password:
+   ```properties
+   DB_PASSWORD=your_actual_postgres_password
+   ```
+   *(Spring Boot automatically reads `.env` on startup; `.env` is gitignored so credentials will never be committed.)*
 
-5. **Start the backend application:**
+4. **Start the backend application:**
    ```powershell
    .\mvnw.cmd spring-boot:run
    ```
-   *Backend starts at `http://localhost:8080`.*
+   *Backend starts at `http://localhost:8080` and connects to PostgreSQL using the configured credentials.*
 
-6. **Verify the health check directly in your browser or via curl:**
+5. **Verify the health check directly in your browser or via curl:**
    ```powershell
    curl.exe http://localhost:8080/api/health
    ```
@@ -152,9 +172,24 @@ Open two PowerShell terminals: one for the backend and one for the frontend.
    {
      "status": "UP",
      "service": "ImpactGraph Backend",
-     "timestamp": "2026-10-22T00:50:00.123456Z"
+     "timestamp": "2026-10-24T12:00:00.123456Z"
    }
    ```
+
+---
+
+### Troubleshooting Common Startup Issues
+
+- **`The server requested SCRAM-based authentication, but no password was provided.`**
+  - **Cause:** PostgreSQL requires password authentication for user `postgres`, but `$env:DB_PASSWORD` was not set in your current terminal session and no `.env` file was populated.
+  - **Resolution:** Set `$env:DB_PASSWORD = "your_password"` in your active PowerShell window, or populate `DB_PASSWORD=your_password` in `backend/.env`, then rerun `.\mvnw.cmd spring-boot:run`.
+
+- **`FATAL: database "impactgraph" does not exist`**
+  - **Cause:** PostgreSQL is running, but the database has not been created yet.
+  - **Resolution:** Create the database using PostgreSQL CLI:
+    ```powershell
+    psql -U postgres -c "CREATE DATABASE impactgraph;"
+    ```
 
 ---
 
