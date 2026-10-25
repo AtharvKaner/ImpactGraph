@@ -1,97 +1,70 @@
 package com.impactgraph.controller;
 
-import com.impactgraph.dto.*;
-import com.impactgraph.security.JwtAuthenticatedUser;
+import com.impactgraph.dto.request.ProjectRequest;
+import com.impactgraph.dto.response.DependencyResponse;
+import com.impactgraph.dto.response.ProjectResponse;
+import com.impactgraph.dto.response.ServiceResponse;
+import com.impactgraph.service.DependencyService;
 import com.impactgraph.service.ProjectService;
-import jakarta.servlet.http.HttpServletRequest;
+import com.impactgraph.service.ServiceService;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.UUID;
 
-/**
- * Project management endpoints.
- * All endpoints require authentication. Project-level authorization is enforced
- * by the service layer (ADMIN=all, DEVELOPER=membership only).
- */
 @RestController
 @RequestMapping("/api/projects")
 public class ProjectController {
 
     private final ProjectService projectService;
+    private final ServiceService serviceService;
+    private final DependencyService dependencyService;
 
-    public ProjectController(ProjectService projectService) {
+    public ProjectController(ProjectService projectService,
+                             ServiceService serviceService,
+                             DependencyService dependencyService) {
         this.projectService = projectService;
+        this.serviceService = serviceService;
+        this.dependencyService = dependencyService;
     }
 
-    /**
-     * List projects accessible to the current user.
-     */
-    @GetMapping
-    public ResponseEntity<List<ProjectResponse>> listProjects(
-            @AuthenticationPrincipal JwtAuthenticatedUser user) {
-        return ResponseEntity.ok(projectService.listProjects(user));
-    }
-
-    /**
-     * Get a single project (with access check).
-     */
-    @GetMapping("/{projectId}")
-    public ResponseEntity<ProjectResponse> getProject(
-            @PathVariable UUID projectId,
-            @AuthenticationPrincipal JwtAuthenticatedUser user) {
-        return ResponseEntity.ok(projectService.getProject(projectId, user));
-    }
-
-    /**
-     * Create a project. Admin only.
-     */
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ProjectResponse> createProject(
-            @Valid @RequestBody ProjectRequest request,
-            @AuthenticationPrincipal JwtAuthenticatedUser user,
-            HttpServletRequest httpRequest) {
-        return ResponseEntity.ok(projectService.createProject(request, user, httpRequest.getRemoteAddr()));
+    public ResponseEntity<ProjectResponse> createProject(@Valid @RequestBody ProjectRequest request) {
+        ProjectResponse created = projectService.createProject(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
-    /**
-     * Update a project. Admin only.
-     */
-    @PutMapping("/{projectId}")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ProjectResponse> updateProject(
-            @PathVariable UUID projectId,
-            @Valid @RequestBody ProjectRequest request,
-            @AuthenticationPrincipal JwtAuthenticatedUser user,
-            HttpServletRequest httpRequest) {
-        return ResponseEntity.ok(projectService.updateProject(projectId, request, user, httpRequest.getRemoteAddr()));
+    @GetMapping
+    public ResponseEntity<List<ProjectResponse>> getAllProjects() {
+        return ResponseEntity.ok(projectService.getAllProjects());
     }
 
-    /**
-     * Delete a project. Admin only.
-     */
-    @DeleteMapping("/{projectId}")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> deleteProject(
-            @PathVariable UUID projectId,
-            @AuthenticationPrincipal JwtAuthenticatedUser user,
-            HttpServletRequest httpRequest) {
-        projectService.deleteProject(projectId, user, httpRequest.getRemoteAddr());
+    @GetMapping("/{id}")
+    public ResponseEntity<ProjectResponse> getProjectById(@PathVariable Long id) {
+        return ResponseEntity.ok(projectService.getProjectById(id));
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<ProjectResponse> updateProject(@PathVariable Long id,
+                                                         @Valid @RequestBody ProjectRequest request) {
+        return ResponseEntity.ok(projectService.updateProject(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteProject(@PathVariable Long id) {
+        projectService.deleteProject(id);
         return ResponseEntity.noContent().build();
     }
 
-    /**
-     * List members of a project. Requires project access.
-     */
-    @GetMapping("/{projectId}/members")
-    public ResponseEntity<List<ProjectService.MemberInfo>> listMembers(
-            @PathVariable UUID projectId,
-            @AuthenticationPrincipal JwtAuthenticatedUser user) {
-        return ResponseEntity.ok(projectService.listMembers(projectId, user));
+    @GetMapping("/{id}/services")
+    public ResponseEntity<List<ServiceResponse>> getServicesForProject(@PathVariable Long id) {
+        return ResponseEntity.ok(serviceService.getAllServices(id));
+    }
+
+    @GetMapping("/{id}/dependencies")
+    public ResponseEntity<List<DependencyResponse>> getDependenciesForProject(@PathVariable Long id) {
+        return ResponseEntity.ok(dependencyService.getAllDependencies(id, null, null));
     }
 }

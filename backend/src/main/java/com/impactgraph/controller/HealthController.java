@@ -6,21 +6,19 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Health check endpoint. Publicly accessible — no authentication required.
- */
 @RestController
-@RequestMapping("/api")
+@RequestMapping("/api/health")
 public class HealthController {
 
-    @GetMapping("/health")
-    public ResponseEntity<Map<String, Object>> health() {
-        return ResponseEntity.ok(Map.of(
-                "status", "UP",
-                "timestamp", Instant.now().toString(),
-                "service", "impactgraph-backend"
-        ));
+    @GetMapping
+    public ResponseEntity<Map<String, Object>> checkHealth() {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "UP");
+        response.put("service", "ImpactGraph Backend");
+        response.put("timestamp", Instant.now().toString());
+        return ResponseEntity.ok(response);
     }
 }
