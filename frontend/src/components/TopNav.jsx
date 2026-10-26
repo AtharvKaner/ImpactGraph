@@ -18,6 +18,9 @@ export function TopNav({
   isDemoFallback = false,
   user = null,
   onLogout = null,
+  onOpenDemoProject = null,
+  isDemoActive = false,
+  onOpenImportModal = null,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -104,6 +107,32 @@ export function TopNav({
 
       {/* Right Controls: Backend Status, Refresh, User Profile */}
       <div className="top-nav-right">
+        {/* Import Real Repository */}
+        {onOpenImportModal && (
+          <button
+            type="button"
+            className="nav-import-btn"
+            onClick={onOpenImportModal}
+            title="Import real GitHub repository or local workspace for architecture analysis"
+          >
+            <span className="nav-import-icon">📦</span>
+            <span className="nav-import-text">Import Repo</span>
+          </button>
+        )}
+
+        {/* Quick Demo Project Switcher */}
+        {onOpenDemoProject && (
+          <button
+            type="button"
+            className={`nav-demo-btn ${isDemoActive ? 'demo-active' : ''}`}
+            onClick={onOpenDemoProject}
+            title={isDemoActive ? 'Demo project currently active' : 'Open ready-to-explore multi-service demo project'}
+          >
+            <span className="nav-demo-icon">⚡</span>
+            <span className="nav-demo-text">{isDemoActive ? 'Demo Active' : 'Open Demo'}</span>
+          </button>
+        )}
+
         {/* Backend Online / Offline Pill */}
         <button
           type="button"

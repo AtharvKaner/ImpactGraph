@@ -30,17 +30,29 @@ public class ProjectService {
     private final ProjectMembershipRepository membershipRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final DemoDataSeeder demoDataSeeder;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ProjectService(ProjectRepository projectRepository,
+                          DependencyRepository dependencyRepository,
+                          ProjectMembershipRepository membershipRepository,
+                          UserRepository userRepository,
+                          AuditService auditService,
+                          @org.springframework.beans.factory.annotation.Autowired(required = false) DemoDataSeeder demoDataSeeder) {
+        this.projectRepository = projectRepository;
+        this.dependencyRepository = dependencyRepository;
+        this.membershipRepository = membershipRepository;
+        this.userRepository = userRepository;
+        this.auditService = auditService;
+        this.demoDataSeeder = demoDataSeeder;
+    }
 
     public ProjectService(ProjectRepository projectRepository,
                           DependencyRepository dependencyRepository,
                           ProjectMembershipRepository membershipRepository,
                           UserRepository userRepository,
                           AuditService auditService) {
-        this.projectRepository = projectRepository;
-        this.dependencyRepository = dependencyRepository;
-        this.membershipRepository = membershipRepository;
-        this.userRepository = userRepository;
-        this.auditService = auditService;
+        this(projectRepository, dependencyRepository, membershipRepository, userRepository, auditService, null);
     }
 
     public ProjectResponse createProject(ProjectRequest request) {
@@ -87,9 +99,17 @@ public class ProjectService {
         }
 
         List<Long> memberProjectIds = membershipRepository.findProjectIdsByUserId(user.getUserId());
-        return projectRepository.findAllById(memberProjectIds).stream()
-                .map(ProjectResponse::from)
-                .collect(Collectors.toList());
+        List<Project> memberProjects = projectRepository.findAllById(memberProjectIds);
+
+        // Always include Demo projects so all users have immediate access to demo architectures
+        List<Project> demoProjects = projectRepository.findAll().stream()
+                .filter(p -> p.getName() != null && p.getName().startsWith("[Demo]"))
+                .filter(p -> !memberProjects.contains(p))
+                .toList();
+
+        List<Project> combined = new java.util.ArrayList<>(memberProjects);
+        combined.addAll(demoProjects);
+        return combined.stream().map(ProjectResponse::from).collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
@@ -169,7 +189,31 @@ public class ProjectService {
         if (user == null || "ADMIN".equals(user.getRole())) {
             return true;
         }
+        if (isDemoProject(projectId)) {
+            return true;
+        }
         return membershipRepository.existsByUserIdAndProjectId(user.getUserId(), projectId);
+    }
+
+    public boolean isDemoProject(Long projectId) {
+        if (projectId == null) return false;
+        return projectRepository.findById(projectId)
+                .map(p -> p.getName() != null && p.getName().startsWith("[Demo]"))
+                .orElse(false);
+    }
+
+    public ProjectResponse getOrCreateDemoProject() {
+        return projectRepository.findByName(DemoDataSeeder.DEMO_PROJECT_NAME)
+                .map(ProjectResponse::from)
+                .orElseGet(() -> {
+                    if (demoDataSeeder != null) {
+                        return ProjectResponse.from(demoDataSeeder.seedDemoProjectIfMissing());
+                    }
+                    Project p = new Project();
+                    p.setName(DemoDataSeeder.DEMO_PROJECT_NAME);
+                    p.setDescription("Demonstration Architecture");
+                    return ProjectResponse.from(projectRepository.save(p));
+                });
     }
 
     public boolean canAccessProject(JwtAuthenticatedUser user, UUID projectId) {

@@ -10,20 +10,55 @@ import {
   getStoredToken,
   logout,
   API_BASE_URL,
+  fetchDemoProject,
+  fetchSecurityFindings,
+  fetchAnalysisHistory,
+  fetchAuditEvents,
 } from './services/impactService';
 import { TopNav } from './components/TopNav';
 import { Sidebar } from './components/Sidebar';
-import { CycleIndicator } from './components/CycleIndicator';
-import { ServiceSelector } from './components/ServiceSelector';
-import { GraphView } from './components/GraphView';
-import { ImpactPanel } from './components/ImpactPanel';
 import { BackendStatusModal } from './components/BackendStatusModal';
 import { ServicesDirectoryModal } from './components/ServicesDirectoryModal';
+import ImportRepositoryModal from './components/ImportRepositoryModal';
 import { LoginView } from './components/LoginView';
+
+// Distinct Multi-View Screens
+import { OverviewView } from './views/OverviewView';
+import { ImpactStudioView } from './views/ImpactStudioView';
+import { ServicesView } from './views/ServicesView';
+import { TopologyView } from './views/TopologyView';
+import { ApiSecurityView } from './views/ApiSecurityView';
+import { SecurityFindingsView } from './views/SecurityFindingsView';
+import { AnalysisHistoryView } from './views/AnalysisHistoryView';
+import { AuditExplorerView } from './views/AuditExplorerView';
+import { TransparencyView } from './views/TransparencyView';
+import { SettingsView } from './views/SettingsView';
+
 import './App.css';
 
+const VALID_VIEWS = new Set([
+  'overview',
+  'studio',
+  'services',
+  'topology',
+  'apis',
+  'findings',
+  'history',
+  'audit',
+  'transparency',
+  'settings',
+]);
+
+function getInitialView() {
+  if (typeof window !== 'undefined' && window.location.hash) {
+    const raw = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase();
+    if (VALID_VIEWS.has(raw)) return raw;
+  }
+  return 'overview';
+}
+
 function App() {
-  // Authentication session state restored from sessionStorage on page load / refresh
+  // Authentication session state restored from sessionStorage
   const [currentUser, setCurrentUser] = useState(() => getStoredUser());
   const [authToken, setAuthToken] = useState(() => getStoredToken());
 
@@ -35,39 +70,137 @@ function App() {
 
   // Persisted projects state
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const stored = window.sessionStorage.getItem('impactgraph_selected_project_id');
+      return stored ? Number(stored) : null;
+    }
+    return null;
+  });
+
+  // Security telemetry and audit history state
+  const [findings, setFindings] = useState([]);
+  const [historyRuns, setHistoryRuns] = useState([]);
+  const [auditEvents, setAuditEvents] = useState([]);
 
   // Impact analysis dashboard state
   const [currentPreset, setCurrentPreset] = useState(DATASET_PRESETS.ECOMMERCE_DAG);
   const [graphData, setGraphData] = useState(null);
 
   // Proposed change target vs executed analysis target
-  const [proposedServiceId, setProposedServiceId] = useState('Order Service');
+  const [proposedServiceId, setProposedServiceId] = useState('Payment Service');
   const [analyzedServiceId, setAnalyzedServiceId] = useState(null);
   const [impactResult, setImpactResult] = useState(null);
   const [impactLoading, setImpactLoading] = useState(false);
 
-  // Server error banner state (e.g. HTTP 400 or 404 responses)
+  // Server error banner state
   const [apiError, setApiError] = useState(null);
 
-  // UI state for navigation and modals
-  const [activeNav, setActiveNav] = useState('dashboard');
+  // Active Multi-View Navigation (overview, studio, services, topology, apis, findings, history, audit, transparency, settings)
+  const [activeNav, setActiveNav] = useState(getInitialView);
   const [isBackendModalOpen, setIsBackendModalOpen] = useState(false);
   const [isServicesModalOpen, setIsServicesModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
-  // Logout handler: clears session storage, resets user/auth state, and clears loaded project data
+  // Sync hash with active view
+  useEffect(() => {
+    function handleHashChange() {
+      const hash = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase();
+      if (VALID_VIEWS.has(hash)) {
+        setActiveNav(hash);
+      }
+    }
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const handleSelectNav = useCallback((viewKey) => {
+    if (VALID_VIEWS.has(viewKey)) {
+      setActiveNav(viewKey);
+      if (typeof window !== 'undefined') {
+        window.location.hash = `#${viewKey}`;
+      }
+    }
+  }, []);
+
+  // Jump from another view (e.g. Services, Topology, Findings) directly into Impact Studio with component selected
+  const handleSelectServiceAndStudio = useCallback((serviceId) => {
+    if (serviceId) {
+      setProposedServiceId(serviceId);
+    }
+    handleSelectNav('studio');
+  }, [handleSelectNav]);
+
+  // Open demo project immediately
+  const handleOpenDemoProject = useCallback(async () => {
+    setApiError(null);
+    try {
+      let demo = projects.find((p) => p.name && p.name.includes('[Demo]'));
+      if (!demo) {
+        demo = await fetchDemoProject();
+      }
+      if (demo && demo.id) {
+        setSelectedProjectId(demo.id);
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          window.sessionStorage.setItem('impactgraph_selected_project_id', String(demo.id));
+        }
+        setProposedServiceId('Payment Service');
+        setAnalyzedServiceId(null);
+        setImpactResult(null);
+        handleSelectNav('overview');
+      }
+    } catch (err) {
+      console.warn('Failed to open demo project:', err);
+    }
+  }, [projects, handleSelectNav]);
+
+  const handleOpenImportModal = useCallback(() => {
+    setIsImportModalOpen(true);
+  }, []);
+
+  const handleProjectImported = useCallback(async (analysisResult, navigateToStudio = false) => {
+    try {
+      const refreshedProjects = await fetchProjects({ timeout: 4000 });
+      setProjects(refreshedProjects);
+      if (analysisResult?.projectId) {
+        setSelectedProjectId(analysisResult.projectId);
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          window.sessionStorage.setItem('impactgraph_selected_project_id', String(analysisResult.projectId));
+        }
+        if (analysisResult.services && analysisResult.services.length > 0) {
+          setProposedServiceId(analysisResult.services[0].name);
+        }
+        setAnalyzedServiceId(null);
+        setImpactResult(null);
+        if (navigateToStudio) {
+          handleSelectNav('studio');
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to refresh projects after import:', err);
+    }
+  }, [handleSelectNav]);
+
+  // Logout handler
   const handleLogout = useCallback(() => {
     logout();
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      window.sessionStorage.removeItem('impactgraph_selected_project_id');
+    }
     setAuthToken(null);
     setCurrentUser(null);
     setProjects([]);
+    setSelectedProjectId(null);
     setGraphData(null);
     setImpactResult(null);
     setAnalyzedServiceId(null);
     setApiError(null);
+    setFindings([]);
+    setHistoryRuns([]);
+    setAuditEvents([]);
   }, []);
 
-  // Primary Health Check function (e.g. for user refresh button)
+  // Primary Health Check function
   const checkHealth = useCallback(async () => {
     setBackendLoading(true);
     setBackendError(null);
@@ -82,6 +215,21 @@ function App() {
         try {
           const projectsList = await fetchProjects({ timeout: 4000 });
           setProjects(projectsList);
+          if (projectsList && projectsList.length > 0) {
+            setSelectedProjectId((prev) => {
+              if (prev != null && projectsList.some((p) => p.id === prev)) {
+                return prev;
+              }
+              const demo = projectsList.find((p) => p.name && p.name.includes('[Demo]'));
+              if (demo) {
+                if (typeof window !== 'undefined' && window.sessionStorage) {
+                  window.sessionStorage.setItem('impactgraph_selected_project_id', String(demo.id));
+                }
+                return demo.id;
+              }
+              return prev;
+            });
+          }
         } catch (err) {
           if (err?.status === 401) {
             handleLogout();
@@ -99,8 +247,8 @@ function App() {
     }
   }, [handleLogout]);
 
-  // Login success handler: records session token and user profile into state
-  const handleLoginSuccess = useCallback((authResponse) => {
+  // Login success handler
+  const handleLoginSuccess = useCallback(async (authResponse, options = {}) => {
     setAuthToken(authResponse.token);
     setCurrentUser({
       userId: authResponse.userId,
@@ -109,8 +257,24 @@ function App() {
       role: authResponse.role,
     });
     setApiError(null);
-    checkHealth();
-  }, [checkHealth]);
+    await checkHealth();
+
+    if (options?.openDemo) {
+      try {
+        const demo = await fetchDemoProject();
+        if (demo && demo.id) {
+          setSelectedProjectId(demo.id);
+          if (typeof window !== 'undefined' && window.sessionStorage) {
+            window.sessionStorage.setItem('impactgraph_selected_project_id', String(demo.id));
+          }
+          setProposedServiceId('Payment Service');
+          handleSelectNav('overview');
+        }
+      } catch (err) {
+        console.warn('Could not auto-select demo project:', err);
+      }
+    }
+  }, [checkHealth, handleSelectNav]);
 
   // Initial backend check and projects loading on mount
   useEffect(() => {
@@ -128,6 +292,21 @@ function App() {
             const projectsList = await fetchProjects({ timeout: 4000 });
             if (!ignore) {
               setProjects(projectsList);
+              if (projectsList && projectsList.length > 0) {
+                setSelectedProjectId((prev) => {
+                  if (prev != null && projectsList.some((p) => p.id === prev)) {
+                    return prev;
+                  }
+                  const demo = projectsList.find((p) => p.name && p.name.includes('[Demo]'));
+                  if (demo) {
+                    if (typeof window !== 'undefined' && window.sessionStorage) {
+                      window.sessionStorage.setItem('impactgraph_selected_project_id', String(demo.id));
+                    }
+                    return demo.id;
+                  }
+                  return prev;
+                });
+              }
             }
           } catch (err) {
             if (!ignore && err?.status === 401) {
@@ -156,6 +335,34 @@ function App() {
     };
   }, [handleLogout]);
 
+  // Load telemetry (findings, runs, audit) for active project
+  useEffect(() => {
+    let ignore = false;
+    async function loadTelemetry() {
+      if (!authToken) return;
+      try {
+        const [fList, hList, aList] = await Promise.all([
+          fetchSecurityFindings({ projectId: selectedProjectId }).catch(() => []),
+          fetchAnalysisHistory(selectedProjectId).catch(() => []),
+          fetchAuditEvents({ size: 10, projectId: selectedProjectId })
+            .then((r) => r?.content || [])
+            .catch(() => []),
+        ]);
+        if (!ignore) {
+          setFindings(fList || []);
+          setHistoryRuns(hList || []);
+          setAuditEvents(aList || []);
+        }
+      } catch (err) {
+        console.warn('Telemetry loading failed:', err);
+      }
+    }
+    loadTelemetry();
+    return () => {
+      ignore = true;
+    };
+  }, [selectedProjectId, authToken]);
+
   // Load graph topology whenever the preset or selected project changes
   useEffect(() => {
     const controller = new AbortController();
@@ -170,7 +377,6 @@ function App() {
           setGraphData(data);
           setApiError(null);
 
-          // Update proposed service selection for the loaded project
           if (data.services && data.services.length > 0) {
             setProposedServiceId((prev) => {
               const exists = data.services.some((s) => s.id === prev);
@@ -248,51 +454,7 @@ function App() {
     }
   }, [proposedServiceId, currentPreset, selectedProjectId, handleLogout]);
 
-  // If already analyzed and user toggles architecture preset, re-evaluate automatically
-  useEffect(() => {
-    if (!analyzedServiceId || !authToken) {
-      return;
-    }
-
-    const controller = new AbortController();
-    let ignore = false;
-
-    async function reAnalyze() {
-      setImpactLoading(true);
-      try {
-        const result = await analyzeChangeImpact(analyzedServiceId, currentPreset, {
-          projectId: selectedProjectId,
-          signal: controller.signal,
-          timeout: 5000,
-        });
-        if (!ignore) {
-          setImpactResult(result);
-          setApiError(null);
-        }
-      } catch (err) {
-        if (!ignore && err.name !== 'AbortError') {
-          if (err?.status === 401) {
-            handleLogout();
-            return;
-          }
-          setApiError(err.message || 'Impact analysis request failed');
-        }
-      } finally {
-        if (!ignore) {
-          setImpactLoading(false);
-        }
-      }
-    }
-
-    reAnalyze();
-
-    return () => {
-      ignore = true;
-      controller.abort();
-    };
-  }, [currentPreset, selectedProjectId, analyzedServiceId, authToken, handleLogout]);
-
-  // Handle service selection (from dropdown, graph node click, or suggested scenario chips)
+  // Handle service selection
   const handleSelectService = useCallback(
     (serviceId) => {
       setProposedServiceId(serviceId);
@@ -307,6 +469,9 @@ function App() {
 
   const handlePresetChange = (preset) => {
     setSelectedProjectId(null);
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      window.sessionStorage.removeItem('impactgraph_selected_project_id');
+    }
     setCurrentPreset(preset);
     setAnalyzedServiceId(null);
     setImpactResult(null);
@@ -315,22 +480,16 @@ function App() {
 
   const handleSelectProject = (projectId) => {
     setSelectedProjectId(projectId);
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      if (projectId != null) {
+        window.sessionStorage.setItem('impactgraph_selected_project_id', String(projectId));
+      } else {
+        window.sessionStorage.removeItem('impactgraph_selected_project_id');
+      }
+    }
     setAnalyzedServiceId(null);
     setImpactResult(null);
     setApiError(null);
-  };
-
-  const handleNavClick = (navKey) => {
-    setActiveNav(navKey);
-    if (navKey === 'dashboard') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else if (navKey === 'impact') {
-      const el = document.querySelector('.impact-panel-card');
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else if (navKey === 'topology') {
-      const el = document.querySelector('.topology-health-card');
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
   };
 
   // Render Login Screen if user has no active authentication token or profile
@@ -346,14 +505,19 @@ function App() {
   const services = graphData?.services || [];
   const dependencies = graphData?.dependencies || [];
   const isDemoFallback = Boolean(graphData?.isFallback || impactResult?.isFallback);
+  const activeProject = projects.find((p) => p.id === selectedProjectId);
+  const isDemoActive = Boolean(activeProject?.name?.includes('[Demo]') || (!selectedProjectId && currentPreset));
 
   return (
     <div className="app-shell">
-      {/* 1. Compact Top Navigation Bar */}
+      {/* 1. Top Navigation Bar */}
       <TopNav
         services={services}
         selectedServiceId={proposedServiceId}
-        onSelectService={handleSelectService}
+        onSelectService={(id) => {
+          handleSelectService(id);
+          handleSelectNav('studio');
+        }}
         healthData={healthData}
         backendLoading={backendLoading}
         onRefresh={checkHealth}
@@ -361,34 +525,28 @@ function App() {
         isDemoFallback={isDemoFallback}
         user={currentUser}
         onLogout={handleLogout}
+        onOpenDemoProject={handleOpenDemoProject}
+        isDemoActive={isDemoActive}
+        onOpenImportModal={handleOpenImportModal}
       />
 
       <div className="app-body-container">
-        {/* 2. Slim Left Sidebar */}
+        {/* 2. Left Multi-View Sidebar */}
         <Sidebar
           activeNav={activeNav}
-          onSelectNav={handleNavClick}
-          onOpenSettings={() => setIsBackendModalOpen(true)}
-          onOpenServicesModal={() => setIsServicesModalOpen(true)}
+          onSelectNav={handleSelectNav}
+          user={currentUser}
         />
 
-        {/* 3. Main Dashboard Workspace */}
-        <main className="main-workspace">
-          {/* Main heading */}
-          <div className="main-header-block">
-            <h1 className="main-title">Software Change Impact Analysis</h1>
-            <p className="main-desc">
-              Simulate service modifications against demonstration architectures or persisted PostgreSQL projects to calculate blast radius and detect circular dependencies.
-            </p>
-          </div>
-
+        {/* 3. Dynamic Multi-View Workspace */}
+        <main className="main-workspace" id="main-content" tabIndex={-1}>
           {/* Honest Demo Fallback Notification Banner */}
           {isDemoFallback && !selectedProjectId && (
             <div className="demo-fallback-banner" role="status">
               <div className="demo-banner-left">
-                <span className="demo-banner-badge">Offline Demo</span>
+                <span className="demo-banner-badge">Offline Mode</span>
                 <span>
-                  Backend server is offline or unreachable. Displaying local demonstration dataset.
+                  Backend server is offline. Local AST simulation fixtures are active.
                 </span>
               </div>
               <button
@@ -402,7 +560,7 @@ function App() {
             </div>
           )}
 
-          {/* Explicit Server Error Banner (e.g. 400 Bad Request, 404 Not Found) */}
+          {/* Explicit Server Error Banner */}
           {apiError && (
             <div className="api-error-banner" role="alert">
               <div className="api-error-left">
@@ -420,58 +578,107 @@ function App() {
             </div>
           )}
 
-          {/* 4. Compact Topology Health Summary */}
-          <CycleIndicator
-            cycleResult={
-              impactResult?.cycleResult || {
-                hasCycle: graphData?.hasCycle,
-                cycles: graphData?.cycles || graphData?.cycleDetails || [],
-              }
-            }
-            presetName={graphData?.name || 'Loading topology...'}
-          />
-
-          {/* 5. Control Bar: Architecture Setup + Simulated Software Change */}
-          <ServiceSelector
-            services={services}
-            proposedServiceId={proposedServiceId}
-            onSelectService={handleSelectService}
-            onAnalyze={handleAnalyze}
-            currentPreset={currentPreset}
-            onChangePreset={handlePresetChange}
-            projects={projects}
-            selectedProjectId={selectedProjectId}
-            onSelectProject={handleSelectProject}
-            loading={impactLoading}
-            hasAnalyzed={Boolean(
-              impactResult && analyzedServiceId && analyzedServiceId === proposedServiceId
-            )}
-            edgeCount={dependencies.length}
-            hasCycle={graphData?.hasCycle}
-          />
-
-          {/* 6 & 7. Large Service Dependency Graph + Clean Impact Analysis Panel */}
-          <div className="dashboard-grid">
-            <GraphView
+          {/* View Routing Switch */}
+          {activeNav === 'overview' && (
+            <OverviewView
               services={services}
               dependencies={dependencies}
-              proposedServiceId={proposedServiceId}
-              analyzedServiceId={analyzedServiceId}
-              impactResult={impactResult}
-              onNodeClick={handleSelectService}
+              graphData={graphData}
+              user={currentUser}
+              onNavigate={handleSelectNav}
+              onSelectServiceAndStudio={handleSelectServiceAndStudio}
+              selectedProjectId={selectedProjectId}
+              currentPreset={currentPreset}
+              findings={findings}
+              historyRuns={historyRuns}
+              auditEvents={auditEvents}
+              onOpenDemo={handleOpenDemoProject}
+              isDemoProject={isDemoActive}
+              onOpenImportModal={handleOpenImportModal}
             />
+          )}
 
-            <ImpactPanel
+          {activeNav === 'studio' && (
+            <ImpactStudioView
+              services={services}
+              dependencies={dependencies}
+              graphData={graphData}
               proposedServiceId={proposedServiceId}
               analyzedServiceId={analyzedServiceId}
-              services={services}
               impactResult={impactResult}
-              loading={impactLoading}
-              onAnalyze={handleAnalyze}
+              impactLoading={impactLoading}
               onSelectService={handleSelectService}
-              currentPresetName={graphData?.name}
+              onAnalyze={handleAnalyze}
+              currentPreset={currentPreset}
+              onChangePreset={handlePresetChange}
+              projects={projects}
+              selectedProjectId={selectedProjectId}
+              onSelectProject={handleSelectProject}
+              findings={findings}
+              onOpenImportModal={handleOpenImportModal}
             />
-          </div>
+          )}
+
+          {activeNav === 'services' && (
+            <ServicesView
+              services={services}
+              dependencies={dependencies}
+              graphData={graphData}
+              onSelectServiceAndStudio={handleSelectServiceAndStudio}
+              selectedProjectId={selectedProjectId}
+              currentPreset={currentPreset}
+            />
+          )}
+
+          {activeNav === 'topology' && (
+            <TopologyView
+              services={services}
+              dependencies={dependencies}
+              graphData={graphData}
+              onSelectServiceAndStudio={handleSelectServiceAndStudio}
+              selectedProjectId={selectedProjectId}
+              currentPreset={currentPreset}
+            />
+          )}
+
+          {activeNav === 'apis' && (
+            <ApiSecurityView
+              onSelectServiceAndStudio={handleSelectServiceAndStudio}
+              selectedProjectId={selectedProjectId}
+            />
+          )}
+
+          {activeNav === 'findings' && (
+            <SecurityFindingsView
+              onSelectServiceAndStudio={handleSelectServiceAndStudio}
+              selectedProjectId={selectedProjectId}
+            />
+          )}
+
+          {activeNav === 'history' && (
+            <AnalysisHistoryView
+              onNavigate={handleSelectNav}
+              onSelectServiceAndStudio={handleSelectServiceAndStudio}
+              selectedProjectId={selectedProjectId}
+            />
+          )}
+
+          {activeNav === 'audit' && (
+            <AuditExplorerView
+              user={currentUser}
+            />
+          )}
+
+          {activeNav === 'transparency' && (
+            <TransparencyView />
+          )}
+
+          {activeNav === 'settings' && (
+            <SettingsView
+              user={currentUser}
+              onLogout={handleLogout}
+            />
+          )}
         </main>
       </div>
 
@@ -487,13 +694,23 @@ function App() {
         apiBaseUrl={API_BASE_URL}
       />
 
-      {/* Services Directory Modal */}
+      {/* Services Directory Modal for search quick access */}
       <ServicesDirectoryModal
         isOpen={isServicesModalOpen}
         onClose={() => setIsServicesModalOpen(false)}
         services={services}
         selectedServiceId={proposedServiceId}
-        onSelectService={handleSelectService}
+        onSelectService={(id) => {
+          handleSelectService(id);
+          handleSelectNav('studio');
+        }}
+      />
+
+      {/* Real Repository Architecture Import Modal */}
+      <ImportRepositoryModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onProjectImported={handleProjectImported}
       />
     </div>
   );

@@ -26,6 +26,7 @@ export function ImpactPanel({
   onAnalyze,
   onSelectService,
   currentPresetName = 'Demonstration Architecture',
+  findings = [],
 }) {
   const serviceMap = useMemo(() => {
     const map = new Map();
@@ -37,6 +38,47 @@ export function ImpactPanel({
 
   const selectedService = proposedServiceId ? serviceMap.get(proposedServiceId) : null;
   const isAnalyzed = Boolean(impactResult && analyzedServiceId && analyzedServiceId === proposedServiceId);
+
+  // Compute relevant security findings within blast radius
+  const relevantFindings = useMemo(() => {
+    if (!findings || findings.length === 0 || !analyzedServiceId) return [];
+    const affectedSet = new Set([
+      analyzedServiceId,
+      ...(impactResult?.directAffectedServices || []),
+      ...(impactResult?.transitiveAffectedServices || []),
+    ]);
+    return findings.filter((f) => {
+      const comp = f.affectedComponent;
+      if (!comp) return false;
+      return affectedSet.has(comp) ||
+        comp.toLowerCase().includes(analyzedServiceId.toLowerCase()) ||
+        analyzedServiceId.toLowerCase().includes(comp.toLowerCase());
+    });
+  }, [findings, analyzedServiceId, impactResult]);
+
+  // Compute targeted regression test recommendations
+  const recommendedTests = useMemo(() => {
+    if (!analyzedServiceId) return [];
+    const tests = [];
+    if (analyzedServiceId === 'Payment Service') {
+      tests.push(
+        { name: 'SecurityIntegrationTest#deleteProject_developer_accessDenied', reason: 'Targeted RBAC regression suite for administrative refund & payment mutating routes' },
+        { name: 'SecurityAnalysisIntegrationTest#verifyFinding_secAuthz002_remediated_succeedsVerification', reason: 'Deterministic verification re-evaluator for Payment Service authorization checks' },
+        { name: 'SecurityIntegrationTest#accessOtherProject_forbidden', reason: 'Tenant isolation verification for upstream Order & Checkout Service callers' },
+      );
+    } else if (analyzedServiceId === 'Order Service') {
+      tests.push(
+        { name: 'SecurityIntegrationTest#accessOtherProject_forbidden', reason: 'Verifies IDOR parameter scoping on GET /api/projects/{projectId}/services' },
+        { name: 'SecurityAnalysisIntegrationTest#verifyFinding_secTaint003_vulnerabilityRemainsPresent_failsVerification', reason: 'Taint-tracking regression suite on order processing routes' },
+      );
+    } else {
+      tests.push(
+        { name: 'SecurityIntegrationTest#unauthenticated_request_unauthorized', reason: 'Guards filter chain authentication boundaries on direct and transitive callers' },
+        { name: 'DemoProjectTest#testDemoProjectAccess', reason: 'Validates multi-tenant project boundary integrity' },
+      );
+    }
+    return tests;
+  }, [analyzedServiceId]);
 
   // 1. Loading State
   if (loading) {
@@ -386,6 +428,59 @@ export function ImpactPanel({
                   </div>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Security Findings Amplified by Blast Radius */}
+          <div className="impact-group-section">
+            <div className="group-header">
+              <span className="group-indicator indicator-direct" />
+              <h4 className="group-title">
+                Security Findings in Blast Radius ({relevantFindings.length})
+              </h4>
+            </div>
+            {relevantFindings.length > 0 ? (
+              <div className="impact-findings-list">
+                {relevantFindings.map((f) => (
+                  <div key={f.id} className="impact-finding-card">
+                    <div className="impact-finding-head">
+                      <span className={`severity-tag tag-${f.severity.toLowerCase()}`}>{f.severity}</span>
+                      <span className="impact-finding-rule">{f.ruleId}</span>
+                      <span className="impact-finding-comp">{f.affectedComponent}</span>
+                    </div>
+                    <span className="impact-finding-title">{f.title}</span>
+                    <p className="impact-finding-desc">{f.description}</p>
+                    {f.suggestedRemediation && (
+                      <div className="impact-finding-remediation">
+                        <strong>Remediation:</strong> {f.suggestedRemediation}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="group-empty-muted">Zero known security findings identified along this component's dependency paths.</p>
+            )}
+          </div>
+
+          {/* Recommended Targeted Regression Tests */}
+          <div className="impact-group-section">
+            <div className="group-header">
+              <span className="group-indicator indicator-transitive" />
+              <h4 className="group-title">
+                Recommended Targeted Regression Tests ({recommendedTests.length})
+              </h4>
+            </div>
+            <div className="impact-tests-list">
+              {recommendedTests.map((t, idx) => (
+                <div key={idx} className="impact-test-item">
+                  <span className="test-icon">🧪</span>
+                  <div className="test-details">
+                    <code className="test-name">{t.name}</code>
+                    <span className="test-reason">{t.reason}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </>

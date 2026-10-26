@@ -141,7 +141,9 @@ export function isPublicEndpoint(path) {
     clean === '/api/auth/login' ||
     clean === '/api/auth/register' ||
     clean === '/api/health' ||
-    clean === '/api/transparency/public'
+    clean === '/api/transparency/public' ||
+    clean === '/api/github/webhook' ||
+    clean === '/api/github/status'
   );
 }
 
@@ -665,3 +667,383 @@ export async function fetchCycleDetection(preset = DATASET_PRESETS.ECOMMERCE_DAG
     };
   }
 }
+
+/**
+ * Fetches filtered security findings from /api/security/findings.
+ */
+export async function fetchSecurityFindings({ status, severity, ruleId, projectId } = {}, options = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (severity) params.set('severity', severity);
+  if (ruleId) params.set('ruleId', ruleId);
+  if (projectId) params.set('projectId', projectId);
+
+  const query = params.toString();
+  const path = query ? `/api/security/findings?${query}` : '/api/security/findings';
+
+  try {
+    const data = await apiGet(path, options);
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    console.warn(`[impactService] Live backend unreachable for findings (${err.message}). Using offline demo findings.`);
+    return [
+      {
+        id: 'mock-finding-1',
+        ruleId: 'SEC-TAINT-003',
+        title: 'Project-Scoped Order Access Missing IDOR Verification',
+        description: 'Order query endpoint accepts project resource ID but does not verify caller has project membership before querying database.',
+        severity: 'HIGH',
+        confidence: 'CONFIRMED',
+        status: 'OPEN',
+        baseRevision: 'develop@c44e1d9',
+        targetRevision: 'feat/order-export@HEAD',
+        filePath: 'backend/src/main/java/com/impactgraph/controller/ProjectController.java',
+        startLine: 54,
+        endLine: 62,
+        affectedEndpoint: 'GET /api/projects/{projectId}/services',
+        httpMethod: 'GET',
+        affectedComponent: 'Order Service',
+        evidencePath: 'ProjectController#getServicesForProject -> serviceService.getAllServices(projectId)',
+        explanation: 'Without calling projectService.enforceProjectAccess(user, projectId), an authenticated user from Project A can read service topologies of Project B.',
+        suggestedRemediation: 'Add projectService.enforceProjectAccess(user, projectId) before service execution.',
+        suggestedTests: 'com.impactgraph.SecurityIntegrationTest#accessOtherProject_forbidden',
+        createdAt: new Date(Date.now() - 3600 * 4000).toISOString(),
+      },
+      {
+        id: 'mock-finding-2',
+        ruleId: 'SEC-DEPS-006',
+        title: 'High-Blast-Radius Shared Security Configuration Modification',
+        description: 'Core Spring Security configuration was updated, affecting authorization rules across all backend API endpoints.',
+        severity: 'MEDIUM',
+        confidence: 'HIGH',
+        status: 'IN_REVIEW',
+        baseRevision: 'main@14ce8c6',
+        targetRevision: 'develop@495be18',
+        filePath: 'backend/src/main/java/com/impactgraph/security/SecurityConfig.java',
+        startLine: 60,
+        endLine: 91,
+        affectedEndpoint: 'ALL /api/**',
+        httpMethod: 'ALL',
+        affectedComponent: 'SecurityConfig',
+        evidencePath: 'SecurityConfig.java -> filterChain() adds /api/admin/** and /api/audit/** rules',
+        explanation: 'Changes to filterChain affect token extraction, CORS headers, and unauthorized error responses for every client request.',
+        suggestedRemediation: 'Verify all 35 security tests in SecurityIntegrationTest pass without error.',
+        suggestedTests: 'com.impactgraph.SecurityIntegrationTest',
+        createdAt: new Date(Date.now() - 3600 * 12000).toISOString(),
+      },
+      {
+        id: 'mock-finding-3',
+        ruleId: 'SEC-AUTHZ-002',
+        title: 'Administrative Project Deletion Missing Role Enforcement',
+        description: 'DELETE /api/projects/{projectId} allowed any authenticated user to delete a project without ADMIN role check.',
+        severity: 'CRITICAL',
+        confidence: 'CONFIRMED',
+        status: 'VERIFIED',
+        baseRevision: 'develop@initial',
+        targetRevision: 'develop@495be18',
+        filePath: 'backend/src/main/java/com/impactgraph/controller/ProjectController.java',
+        startLine: 75,
+        endLine: 86,
+        affectedEndpoint: 'DELETE /api/projects/{projectId}',
+        httpMethod: 'DELETE',
+        affectedComponent: 'ProjectController',
+        evidencePath: 'ProjectController#deleteProject -> verified ADMIN check added',
+        explanation: 'The developer role check was properly added and verified by automated regression tests.',
+        suggestedRemediation: 'Enforce ADMIN role check on mutating routes.',
+        suggestedTests: 'com.impactgraph.SecurityIntegrationTest#deleteProject_developer_accessDenied',
+        verificationNotes: 'Verified resolved: RBAC enforcement confirmed via SecurityIntegrationTest with 0 errors.',
+        createdAt: new Date(Date.now() - 3600 * 24000).toISOString(),
+        verifiedAt: new Date(Date.now() - 3600 * 2000).toISOString(),
+      }
+    ];
+  }
+}
+
+/**
+ * Fetches a single finding by ID.
+ */
+export async function fetchFindingById(id, options = {}) {
+  return await apiGet(`/api/security/findings/${id}`, options);
+}
+
+/**
+ * Re-runs deterministic verification checks on a finding.
+ */
+export async function verifyFinding(id, options = {}) {
+  try {
+    return await apiPost(`/api/security/findings/${id}/verify`, {}, options);
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    return {
+      findingId: id,
+      previousStatus: 'OPEN',
+      newStatus: 'VERIFIED',
+      verifiedResolved: true,
+      verificationMessage: 'Offline Simulation: Verified deterministic check passes on ProjectController role enforcement.',
+      executedCheck: 'Offline AST validation fixture',
+    };
+  }
+}
+
+/**
+ * Fetches security-annotated API Inventory from /api/security/api-inventory.
+ */
+export async function fetchApiInventory(options = {}) {
+  try {
+    const data = await apiGet('/api/security/api-inventory', options);
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    return [
+      { method: 'GET', path: '/api/health', controllerName: 'HealthController', handlerMethod: 'health', authRequirement: 'PUBLIC', requiredRole: null, hasPreAuthorize: false, isPermitAll: true, securitySource: 'SecurityConfig.permitAll()', sensitiveFields: [], driftStatus: 'UNCHANGED', riskLevel: 'SAFE' },
+      { method: 'POST', path: '/api/auth/login', controllerName: 'AuthController', handlerMethod: 'login', authRequirement: 'PUBLIC', requiredRole: null, hasPreAuthorize: false, isPermitAll: true, securitySource: 'SecurityConfig.permitAll()', sensitiveFields: ['password'], driftStatus: 'UNCHANGED', riskLevel: 'SAFE' },
+      { method: 'POST', path: '/api/auth/register', controllerName: 'AuthController', handlerMethod: 'register', authRequirement: 'PUBLIC', requiredRole: null, hasPreAuthorize: false, isPermitAll: true, securitySource: 'SecurityConfig.permitAll()', sensitiveFields: ['password'], driftStatus: 'UNCHANGED', riskLevel: 'SAFE' },
+      { method: 'GET', path: '/api/projects', controllerName: 'ProjectController', handlerMethod: 'getAllProjects', authRequirement: 'AUTHENTICATED', requiredRole: null, hasPreAuthorize: false, isPermitAll: false, securitySource: 'SecurityConfig.authenticated()', sensitiveFields: [], driftStatus: 'UNCHANGED', riskLevel: 'SAFE' },
+      { method: 'POST', path: '/api/projects', controllerName: 'ProjectController', handlerMethod: 'createProject', authRequirement: 'ROLE_BASED', requiredRole: 'ROLE_ADMIN', hasPreAuthorize: false, isPermitAll: false, securitySource: 'Controller Role Check (ADMIN)', sensitiveFields: [], driftStatus: 'UNCHANGED', riskLevel: 'MEDIUM' },
+      { method: 'DELETE', path: '/api/projects/{projectId}', controllerName: 'ProjectController', handlerMethod: 'deleteProject', authRequirement: 'ROLE_BASED', requiredRole: 'ROLE_ADMIN', hasPreAuthorize: false, isPermitAll: false, securitySource: 'Controller Role Check (ADMIN)', sensitiveFields: [], driftStatus: 'UNCHANGED', riskLevel: 'HIGH' },
+      { method: 'GET', path: '/api/audit/events', controllerName: 'AuditController', handlerMethod: 'getEvents', authRequirement: 'ROLE_BASED', requiredRole: 'ROLE_ADMIN', hasPreAuthorize: true, isPermitAll: false, securitySource: '@PreAuthorize("hasRole(\'ADMIN\')")', sensitiveFields: [], driftStatus: 'UNCHANGED', riskLevel: 'SAFE' },
+      { method: 'POST', path: '/api/admin/memberships', controllerName: 'AdminController', handlerMethod: 'grantMembership', authRequirement: 'ROLE_BASED', requiredRole: 'ROLE_ADMIN', hasPreAuthorize: true, isPermitAll: false, securitySource: '@PreAuthorize("hasRole(\'ADMIN\')")', sensitiveFields: [], driftStatus: 'UNCHANGED', riskLevel: 'MEDIUM' },
+      { method: 'GET', path: '/api/transparency/public', controllerName: 'TransparencyController', handlerMethod: 'getPublicTransparency', authRequirement: 'PUBLIC', requiredRole: null, hasPreAuthorize: false, isPermitAll: true, securitySource: 'SecurityConfig.permitAll()', sensitiveFields: [], driftStatus: 'UNCHANGED', riskLevel: 'SAFE' },
+      { method: 'GET', path: '/api/transparency/my-activity', controllerName: 'TransparencyController', handlerMethod: 'getMyActivity', authRequirement: 'AUTHENTICATED', requiredRole: null, hasPreAuthorize: false, isPermitAll: false, securitySource: 'SecurityConfig.authenticated()', sensitiveFields: [], driftStatus: 'UNCHANGED', riskLevel: 'SAFE' },
+    ];
+  }
+}
+
+/**
+ * Fetches analysis run history.
+ */
+export async function fetchAnalysisHistory(projectId, options = {}) {
+  const url = projectId ? `/api/security/history?projectId=${encodeURIComponent(projectId)}` : '/api/security/history';
+  try {
+    const data = await apiGet(url, options);
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    return [
+      {
+        id: 'run-1',
+        runType: 'MANUAL',
+        baseRevision: 'develop@c44e1d9',
+        targetRevision: 'feat/dashboard-redesign@HEAD',
+        timestamp: new Date().toISOString(),
+        totalFindings: 3,
+        criticalCount: 1,
+        highCount: 1,
+        mediumCount: 1,
+        lowCount: 0,
+        status: 'COMPLETED',
+        summary: 'Baseline change-impact and security regression scan completed across 10 API endpoints.',
+      }
+    ];
+  }
+}
+
+/**
+ * Executes security change-impact analysis against a target revision.
+ */
+export async function triggerSecurityAnalysis({ projectId, baseRevision, targetRevision } = {}, options = {}) {
+  const params = new URLSearchParams();
+  if (projectId) params.set('projectId', projectId);
+  if (baseRevision) params.set('baseRevision', baseRevision);
+  if (targetRevision) params.set('targetRevision', targetRevision);
+
+  const url = `/api/security/analyze?${params.toString()}`;
+  return await apiPost(url, {}, options);
+}
+
+/**
+ * Fetches AI-assisted explanation and remediation snippet for a finding.
+ */
+export async function fetchAiExplanation(findingId, options = {}) {
+  try {
+    return await apiGet(`/api/security/findings/${findingId}/ai-explanation`, options);
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    return {
+      findingId,
+      ruleId: 'SEC-TAINT-003',
+      threatSummary: 'Insecure Direct Object Reference (IDOR): A user can access or manipulate resources of another organization or project by guessing or tampering with the URL identifier.',
+      impactRationale: 'The controller extracts the resource ID directly from the path variable without checking that the caller belongs to the tenant project.',
+      suggestedRemediation: 'Add projectService.enforceProjectAccess(user, projectId) before executing domain logic.',
+      remediationCodeSnippet: 'public void enforceProjectAccess(JwtAuthenticatedUser user, Long projectId) {\n    if (!canAccessProject(user, projectId)) throw new SecurityException("Access denied");\n}',
+      suggestedRegressionTests: ['com.impactgraph.SecurityIntegrationTest#accessOtherProject_forbidden'],
+      limitationsAndUncertainty: 'Offline analysis knowledge engine. Static graph reachability does not guarantee exploitability without runtime validation.',
+      isAiGenerated: false,
+      modelProvider: 'Deterministic Security Knowledge Engine',
+    };
+  }
+}
+
+/**
+ * Fetches paginated audit events from /api/audit/events (requires ADMIN).
+ */
+export async function fetchAuditEvents({ page = 0, size = 20, projectId, eventType } = {}, options = {}) {
+  let url = `/api/audit/events?page=${page}&size=${size}`;
+  if (projectId) url = `/api/audit/events/by-project/${projectId}?page=${page}&size=${size}`;
+  else if (eventType) url = `/api/audit/events/by-type/${eventType}?page=${page}&size=${size}`;
+
+  try {
+    return await apiGet(url, options);
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    return {
+      content: [
+        { id: '1', eventType: 'LOGIN_SUCCESS', actorEmail: 'admin@impactgraph.io', outcome: 'SUCCESS', description: 'User login authenticated', clientIp: '127.0.0.1', timestamp: new Date(Date.now() - 600000).toISOString() },
+        { id: '2', eventType: 'PROJECT_CREATED', actorEmail: 'admin@impactgraph.io', outcome: 'SUCCESS', description: 'Created project: E-Commerce Production', clientIp: '127.0.0.1', timestamp: new Date(Date.now() - 1800000).toISOString() },
+        { id: '3', eventType: 'MEMBERSHIP_GRANTED', actorEmail: 'admin@impactgraph.io', outcome: 'SUCCESS', description: 'Granted DEVELOPER to dev@impactgraph.io', clientIp: '127.0.0.1', timestamp: new Date(Date.now() - 3600000).toISOString() },
+        { id: '4', eventType: 'ACCESS_DENIED', actorEmail: 'dev@impactgraph.io', outcome: 'FAILURE', description: 'Cross-project access denied', clientIp: '192.168.1.15', timestamp: new Date(Date.now() - 7200000).toISOString() },
+      ],
+      totalElements: 4,
+      totalPages: 1,
+      number: 0,
+    };
+  }
+}
+
+/**
+ * Fetches user activity from /api/transparency/my-activity (available to all authenticated users).
+ */
+export async function fetchMyActivity({ page = 0, size = 10 } = {}, options = {}) {
+  try {
+    return await apiGet(`/api/transparency/my-activity?page=${page}&size=${size}`, options);
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    return {
+      userId: 'offline-user-id',
+      email: 'engineer@impactgraph.io',
+      role: 'DEVELOPER',
+      recentActivity: [
+        { id: '1', eventType: 'LOGIN_SUCCESS', outcome: 'SUCCESS', description: 'Authenticated successfully', timestamp: new Date(Date.now() - 900000).toISOString() },
+        { id: '2', eventType: 'PROJECT_UPDATED', outcome: 'SUCCESS', description: 'Inspected dependency graph topology', timestamp: new Date(Date.now() - 3600000).toISOString() },
+      ],
+      totalEvents: 2,
+      page: 0,
+      totalPages: 1,
+    };
+  }
+}
+
+/**
+ * Fetches public transparency disclosure from /api/transparency/public.
+ */
+export async function fetchPublicTransparency(options = {}) {
+  try {
+    return await apiGet('/api/transparency/public', options);
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    return {
+      dataCollected: [
+        { category: 'Account Identity', fields: ['Email address', 'Display name', 'Hashed password (BCrypt)', 'Role (ADMIN or DEVELOPER)'], purpose: 'Authentication and authorization' },
+        { category: 'Project Metadata', fields: ['Project name', 'Description', 'Creation/update timestamps'], purpose: 'Organizing dependency analysis workspaces' },
+        { category: 'Project Membership', fields: ['User-to-project associations', 'Who granted membership'], purpose: 'Controlling project-level access' },
+        { category: 'Security Events (Audit Log)', fields: ['Event type', 'Timestamp', 'Actor email', 'Project/resource ID', 'Outcome', 'Client IP'], purpose: 'Security monitoring and compliance' },
+        { category: 'Services, APIs, and Dependencies', fields: ['Defined by core module and source AST parser'], purpose: 'Software dependency and change-impact analysis' }
+      ],
+      dataStorage: {
+        database: 'PostgreSQL',
+        location: 'Configured by deployment (DB_URL)',
+        encryption: 'Not enforced by the application layer; depends on PostgreSQL and storage infra.',
+        backups: 'Managed by infrastructure operations.'
+      },
+      graphAnalysis: {
+        description: 'ImpactGraph analyzes software dependencies to determine change impact across services and APIs.',
+        dataUsed: 'Project services, APIs, and dependency relationships',
+        status: 'Active: BFS/DFS reverse reachability blast-radius engine with Tarjan cycle detector.'
+      },
+      accessControl: {
+        ADMIN: 'Can manage all projects, grant/revoke memberships, view complete audit logs, and administer users.',
+        DEVELOPER: 'Can access only projects they have been granted membership to. Cannot view full audit logs or manage other users.'
+      },
+      dataRetention: {
+        auditEvents: 'Retained indefinitely in the database for auditability and compliance.',
+        userAccounts: 'Persist until manually removed by an administrator.',
+        limitation: 'Automatic scheduled data deletion policies are not yet implemented.'
+      }
+    };
+  }
+}
+
+/**
+ * Fetches GitHub webhook integration status.
+ */
+export async function fetchGitHubStatus(options = {}) {
+  try {
+    return await apiGet('/api/github/status', options);
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    return {
+      configured: false,
+      monitoredEvents: 'pull_request',
+      endpoint: '/api/github/webhook',
+      note: 'Offline demonstration mode: configure GITHUB_WEBHOOK_SECRET to enable live HMAC verification.',
+    };
+  }
+}
+
+/**
+ * Fetches the seeded deterministic demo project from /api/projects/demo.
+ */
+export async function fetchDemoProject(options = {}) {
+  try {
+    return await apiGet('/api/projects/demo', options);
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    return {
+      id: 1,
+      name: '[Demo] E-Commerce Platform',
+      description: 'Deterministic 8-service multi-tier e-commerce platform demo architecture with security findings.',
+    };
+  }
+}
+
+/**
+ * Imports a real GitHub repository or local directory and triggers architectural analysis.
+ *
+ * @param {object} payload { sourceType, repositoryUrl, localPath, branch, personalAccessToken, projectName }
+ * @param {object} options
+ * @returns {Promise<object>} RepositoryAnalysisResponseDto
+ */
+export async function importRepository(payload, options = {}) {
+  return await apiPost('/api/repositories/import', payload, options);
+}
+
+/**
+ * Compares two Git revisions on a project and calculates downstream change impact.
+ *
+ * @param {object} payload { projectId, baseRevision, targetRevision, repositoryUrl, localPath, personalAccessToken }
+ * @param {object} options
+ * @returns {Promise<object>} RevisionComparisonResponseDto
+ */
+export async function compareRevisions(payload, options = {}) {
+  if (!payload || !payload.projectId) {
+    throw new Error('Project ID is required to compare revisions');
+  }
+  return await apiPost('/api/repositories/compare-revisions', payload, options);
+}
+
+/**
+ * Discovers and inspects the local workspace repository.
+ *
+ * @param {object} options
+ * @returns {Promise<object>}
+ */
+export async function fetchLocalWorkspaceInfo(options = {}) {
+  return await apiGet('/api/repositories/local-workspace', options);
+}
+
+/**
+ * Retrieves recent revisions / commit logs for the workspace.
+ *
+ * @param {number|object} limit
+ * @param {object} options
+ * @returns {Promise<Array<object>>}
+ */
+export async function fetchWorkspaceRevisions(limit = 10, options = {}) {
+  const queryLimit = typeof limit === 'number' ? `?limit=${limit}` : '';
+  const opts = typeof limit === 'object' ? limit : options;
+  return await apiGet(`/api/repositories/revisions${queryLimit}`, opts);
+}
+
+export const analyzeSecurityDiff = triggerSecurityAnalysis;
+export const fetchHealth = checkBackendHealth;

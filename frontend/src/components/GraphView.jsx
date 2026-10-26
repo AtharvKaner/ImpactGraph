@@ -32,7 +32,6 @@ function GraphInner({
 }) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const [isLocked, setIsLocked] = useState(false);
-
   const effectiveAnalyzedId = analyzedServiceId || selectedServiceId;
 
   const directAffected = useMemo(
@@ -72,11 +71,12 @@ function GraphInner({
   const nodes = useMemo(() => {
     return services.map((svc, index) => {
       let status = 'unaffected';
-      if (svc.id === effectiveAnalyzedId) {
+      const directlyChanged = new Set(impactResult?.directlyChangedServices || []);
+      if (svc.id === effectiveAnalyzedId || directlyChanged.has(svc.id) || directlyChanged.has(svc.label)) {
         status = 'changed';
-      } else if (directAffected.has(svc.id)) {
+      } else if (directAffected.has(svc.id) || directAffected.has(svc.label)) {
         status = 'direct';
-      } else if (transitiveAffected.has(svc.id)) {
+      } else if (transitiveAffected.has(svc.id) || transitiveAffected.has(svc.label)) {
         status = 'transitive';
       } else if (svc.id === proposedServiceId) {
         status = 'proposed';
@@ -105,12 +105,13 @@ function GraphInner({
         },
       };
     });
-  }, [services, effectiveAnalyzedId, proposedServiceId, directAffected, transitiveAffected]);
+  }, [services, effectiveAnalyzedId, proposedServiceId, directAffected, transitiveAffected, impactResult?.directlyChangedServices]);
 
   // Build React Flow edges
   // Convention: source -> target means source depends on target
   const edges = useMemo(() => {
-    return dependencies.map((dep, index) => {
+    const visibleIds = new Set(services.map((service) => service.id));
+    return dependencies.filter((dep) => visibleIds.has(dep.source || dep.sourceServiceName) && visibleIds.has(dep.target || dep.targetServiceName)).map((dep, index) => {
       const source = dep.source || dep.sourceServiceName;
       const target = dep.target || dep.targetServiceName;
       const edgeKey = `${source}->${target}`;
@@ -168,7 +169,7 @@ function GraphInner({
         },
       };
     });
-  }, [dependencies, directEdgeKeys, transitiveEdgeKeys, effectiveAnalyzedId]);
+  }, [dependencies, services, directEdgeKeys, transitiveEdgeKeys, effectiveAnalyzedId]);
 
   const handleNodeClick = useCallback(
     (_, node) => {
@@ -221,7 +222,7 @@ function GraphInner({
       </div>
 
       {/* React Flow Canvas */}
-      <div className="react-flow-wrapper">
+      <div className="react-flow-wrapper" style={{ width: '100%', height: '580px', minHeight: '500px', position: 'relative' }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}

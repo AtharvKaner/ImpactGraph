@@ -31,6 +31,7 @@ export function ServiceSelector({
   hasAnalyzed = false,
   edgeCount = 10,
   hasCycle = false,
+  onOpenImportModal = null,
 }) {
   const selectedService = services.find((s) => s.id === proposedServiceId);
   const isPendingAnalysis = proposedServiceId && !hasAnalyzed;
@@ -105,6 +106,17 @@ export function ServiceSelector({
                 <IconChevronDown size={14} />
               </div>
             </div>
+          )}
+
+          {onOpenImportModal && (
+            <button
+              type="button"
+              className="btn-import-project-chip"
+              onClick={onOpenImportModal}
+              title="Import a new repository for architecture analysis"
+            >
+              <span>📦 Import Repo</span>
+            </button>
           )}
 
           <div className="architecture-meta-badge" title="Architecture summary">
