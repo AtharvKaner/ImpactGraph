@@ -13,16 +13,16 @@ import java.util.UUID;
 @Repository
 public interface ProjectMembershipRepository extends JpaRepository<ProjectMembership, UUID> {
 
-    boolean existsByUserIdAndProjectId(UUID userId, UUID projectId);
+    boolean existsByUserIdAndProjectId(UUID userId, Long projectId);
 
-    Optional<ProjectMembership> findByUserIdAndProjectId(UUID userId, UUID projectId);
+    Optional<ProjectMembership> findByUserIdAndProjectId(UUID userId, Long projectId);
 
     List<ProjectMembership> findByUserId(UUID userId);
 
-    List<ProjectMembership> findByProjectId(UUID projectId);
+    List<ProjectMembership> findByProjectId(Long projectId);
 
-    void deleteByUserIdAndProjectId(UUID userId, UUID projectId);
+    void deleteByUserIdAndProjectId(UUID userId, Long projectId);
 
     @Query("SELECT pm.project.id FROM ProjectMembership pm WHERE pm.user.id = :userId")
-    List<UUID> findProjectIdsByUserId(@Param("userId") UUID userId);
+    List<Long> findProjectIdsByUserId(@Param("userId") UUID userId);
 }

@@ -4,12 +4,16 @@ import com.impactgraph.dto.request.ProjectRequest;
 import com.impactgraph.dto.response.DependencyResponse;
 import com.impactgraph.dto.response.ProjectResponse;
 import com.impactgraph.dto.response.ServiceResponse;
+import com.impactgraph.security.JwtAuthenticatedUser;
 import com.impactgraph.service.DependencyService;
 import com.impactgraph.service.ProjectService;
 import com.impactgraph.service.ServiceService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -31,40 +35,71 @@ public class ProjectController {
     }
 
     @PostMapping
-    public ResponseEntity<ProjectResponse> createProject(@Valid @RequestBody ProjectRequest request) {
-        ProjectResponse created = projectService.createProject(request);
+    public ResponseEntity<ProjectResponse> createProject(
+            @Valid @RequestBody ProjectRequest request,
+            @AuthenticationPrincipal JwtAuthenticatedUser user,
+            HttpServletRequest httpRequest) {
+        if (user != null && !"ADMIN".equals(user.getRole())) {
+            throw new AccessDeniedException("Access denied");
+        }
+        ProjectResponse created = projectService.createProject(
+                request, user, httpRequest != null ? httpRequest.getRemoteAddr() : null);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
     @GetMapping
-    public ResponseEntity<List<ProjectResponse>> getAllProjects() {
-        return ResponseEntity.ok(projectService.getAllProjects());
+    public ResponseEntity<List<ProjectResponse>> getAllProjects(
+            @AuthenticationPrincipal JwtAuthenticatedUser user) {
+        return ResponseEntity.ok(projectService.getAllProjects(user));
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<ProjectResponse> getProjectById(@PathVariable Long id) {
-        return ResponseEntity.ok(projectService.getProjectById(id));
+    @GetMapping("/{projectId}")
+    public ResponseEntity<ProjectResponse> getProjectById(
+            @PathVariable("projectId") Long projectId,
+            @AuthenticationPrincipal JwtAuthenticatedUser user) {
+        return ResponseEntity.ok(projectService.getProjectById(projectId, user));
     }
 
-    @PutMapping("/{id}")
-    public ResponseEntity<ProjectResponse> updateProject(@PathVariable Long id,
-                                                         @Valid @RequestBody ProjectRequest request) {
-        return ResponseEntity.ok(projectService.updateProject(id, request));
+    @PutMapping("/{projectId}")
+    public ResponseEntity<ProjectResponse> updateProject(
+            @PathVariable("projectId") Long projectId,
+            @Valid @RequestBody ProjectRequest request,
+            @AuthenticationPrincipal JwtAuthenticatedUser user,
+            HttpServletRequest httpRequest) {
+        if (user != null && !"ADMIN".equals(user.getRole())) {
+            throw new AccessDeniedException("Access denied");
+        }
+        return ResponseEntity.ok(projectService.updateProject(
+                projectId, request, user, httpRequest != null ? httpRequest.getRemoteAddr() : null));
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteProject(@PathVariable Long id) {
-        projectService.deleteProject(id);
+    @DeleteMapping("/{projectId}")
+    public ResponseEntity<Void> deleteProject(
+            @PathVariable("projectId") Long projectId,
+            @AuthenticationPrincipal JwtAuthenticatedUser user,
+            HttpServletRequest httpRequest) {
+        if (user != null && !"ADMIN".equals(user.getRole())) {
+            throw new AccessDeniedException("Access denied");
+        }
+        projectService.deleteProject(
+                projectId, user, httpRequest != null ? httpRequest.getRemoteAddr() : null);
         return ResponseEntity.noContent().build();
     }
 
-    @GetMapping("/{id}/services")
-    public ResponseEntity<List<ServiceResponse>> getServicesForProject(@PathVariable Long id) {
-        return ResponseEntity.ok(serviceService.getAllServices(id));
+    @GetMapping("/{projectId}/members")
+    public ResponseEntity<List<ProjectService.MemberInfo>> listMembers(
+            @PathVariable("projectId") Long projectId,
+            @AuthenticationPrincipal JwtAuthenticatedUser user) {
+        return ResponseEntity.ok(projectService.listMembers(projectId, user));
     }
 
-    @GetMapping("/{id}/dependencies")
-    public ResponseEntity<List<DependencyResponse>> getDependenciesForProject(@PathVariable Long id) {
-        return ResponseEntity.ok(dependencyService.getAllDependencies(id, null, null));
+    @GetMapping("/{projectId}/services")
+    public ResponseEntity<List<ServiceResponse>> getServicesForProject(@PathVariable("projectId") Long projectId) {
+        return ResponseEntity.ok(serviceService.getAllServices(projectId));
+    }
+
+    @GetMapping("/{projectId}/dependencies")
+    public ResponseEntity<List<DependencyResponse>> getDependenciesForProject(@PathVariable("projectId") Long projectId) {
+        return ResponseEntity.ok(dependencyService.getAllDependencies(projectId, null, null));
     }
 }

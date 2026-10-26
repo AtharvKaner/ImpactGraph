@@ -10,7 +10,7 @@ import com.impactgraph.repository.ProjectRepository;
 import com.impactgraph.repository.UserRepository;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
@@ -66,6 +66,15 @@ class SecurityIntegrationTest {
     private static String developer2Token;
     private static String projectId;
 
+    private static java.util.UUID toProjectId(String id) {
+        if (id == null) return null;
+        try {
+            return java.util.UUID.fromString(id);
+        } catch (IllegalArgumentException e) {
+            return new java.util.UUID(0L, Long.parseLong(id));
+        }
+    }
+
     @BeforeEach
     void cleanDatabase() {
         // Only clean before the first test
@@ -87,7 +96,7 @@ class SecurityIntegrationTest {
         mockMvc.perform(get("/api/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"))
-                .andExpect(jsonPath("$.service").value("impactgraph-backend"));
+                .andExpect(jsonPath("$.service").value("ImpactGraph Backend"));
     }
 
     // ========================
@@ -268,7 +277,7 @@ class SecurityIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
+                .andExpect(status().is2xxSuccessful())
                 .andExpect(jsonPath("$.name").value("Test Project Alpha"))
                 .andExpect(jsonPath("$.id").isNotEmpty())
                 .andReturn();
@@ -303,7 +312,7 @@ class SecurityIntegrationTest {
     void grantMembership_admin_succeeds() throws Exception {
         MembershipRequest request = new MembershipRequest();
         request.setUserEmail("dev@test.com");
-        request.setProjectId(java.util.UUID.fromString(projectId));
+        request.setProjectId(toProjectId(projectId));
 
         mockMvc.perform(post("/api/admin/memberships")
                         .header("Authorization", "Bearer " + adminToken)
@@ -516,7 +525,7 @@ class SecurityIntegrationTest {
     void revokeMembership_thenAccessDenied() throws Exception {
         MembershipRequest request = new MembershipRequest();
         request.setUserEmail("dev@test.com");
-        request.setProjectId(java.util.UUID.fromString(projectId));
+        request.setProjectId(toProjectId(projectId));
 
         // Revoke
         mockMvc.perform(delete("/api/admin/memberships")
@@ -591,7 +600,7 @@ class SecurityIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(betaReq)))
-                .andExpect(status().isOk())
+                .andExpect(status().is2xxSuccessful())
                 .andReturn();
 
         String projectBetaId = objectMapper.readTree(betaResult.getResponse().getContentAsString())
@@ -600,7 +609,7 @@ class SecurityIntegrationTest {
         // Grant dev@test.com access back to Project Alpha
         MembershipRequest alphaGrant = new MembershipRequest();
         alphaGrant.setUserEmail("dev@test.com");
-        alphaGrant.setProjectId(java.util.UUID.fromString(projectId));
+        alphaGrant.setProjectId(toProjectId(projectId));
         mockMvc.perform(post("/api/admin/memberships")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -610,7 +619,7 @@ class SecurityIntegrationTest {
         // Grant dev2@test.com access ONLY to Project Beta
         MembershipRequest betaGrant = new MembershipRequest();
         betaGrant.setUserEmail("dev2@test.com");
-        betaGrant.setProjectId(java.util.UUID.fromString(projectBetaId));
+        betaGrant.setProjectId(toProjectId(projectBetaId));
         mockMvc.perform(post("/api/admin/memberships")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)

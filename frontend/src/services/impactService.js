@@ -50,13 +50,117 @@ export class HttpError extends Error {
 }
 
 /**
- * Helper to perform GET requests with timeout, signal cancellation, and clean error parsing.
+ * Keys used for session persistence in sessionStorage.
+ */
+export const SESSION_TOKEN_KEY = 'impactgraph_token';
+export const SESSION_USER_KEY = 'impactgraph_user';
+
+/**
+ * Accesses sessionStorage in a browser-safe and test-safe way.
+ */
+function getSessionStorage() {
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    return window.sessionStorage;
+  }
+  if (typeof globalThis !== 'undefined' && globalThis.sessionStorage) {
+    return globalThis.sessionStorage;
+  }
+  return null;
+}
+
+/**
+ * Retrieves the stored JWT from sessionStorage.
+ * @returns {string|null}
+ */
+export function getStoredToken() {
+  const storage = getSessionStorage();
+  if (!storage) return null;
+  return storage.getItem(SESSION_TOKEN_KEY);
+}
+
+/**
+ * Retrieves the stored user metadata from sessionStorage.
+ * @returns {object|null}
+ */
+export function getStoredUser() {
+  const storage = getSessionStorage();
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(SESSION_USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Saves the authenticated session (JWT and user data) into sessionStorage.
+ * @param {object} authData AuthResponse from backend
+ */
+export function setSession(authData) {
+  const storage = getSessionStorage();
+  if (!storage || !authData || !authData.token) return;
+  storage.setItem(SESSION_TOKEN_KEY, authData.token);
+  const user = {
+    userId: authData.userId,
+    email: authData.email,
+    displayName: authData.displayName,
+    role: authData.role,
+  };
+  storage.setItem(SESSION_USER_KEY, JSON.stringify(user));
+}
+
+/**
+ * Clears the authenticated session from sessionStorage.
+ */
+export function clearSession() {
+  const storage = getSessionStorage();
+  if (!storage) return;
+  storage.removeItem(SESSION_TOKEN_KEY);
+  storage.removeItem(SESSION_USER_KEY);
+}
+
+/**
+ * Checks whether an active authentication token exists.
+ * @returns {boolean}
+ */
+export function isAuthenticated() {
+  return Boolean(getStoredToken());
+}
+
+/**
+ * Checks whether an endpoint path is public in SecurityConfig.
+ * Public endpoints: /api/health, /api/auth/login, /api/auth/register, /api/transparency/public.
+ * @param {string} path
+ * @returns {boolean}
+ */
+export function isPublicEndpoint(path) {
+  if (!path) return false;
+  const clean = path.split('?')[0].replace(/\/+$/, '');
+  return (
+    clean === '/api/auth/login' ||
+    clean === '/api/auth/register' ||
+    clean === '/api/health' ||
+    clean === '/api/transparency/public'
+  );
+}
+
+/**
+ * Helper to perform HTTP requests with timeout, signal cancellation,
+ * automatic JWT Bearer token attachment, and clean error parsing.
  *
- * @param {string} path API path (e.g. '/api/graph')
- * @param {object} options request options including signal and timeout (ms)
+ * @param {string} path API path (e.g. '/api/projects')
+ * @param {object} options request options including method, body, signal, timeout (ms), auth override
  * @returns {Promise<any>} parsed JSON response
  */
-async function apiGet(path, { timeout = 5000, signal: externalSignal, headers = {} } = {}) {
+export async function apiFetch(path, {
+  method = 'GET',
+  body,
+  timeout = 5000,
+  signal: externalSignal,
+  headers = {},
+  auth,
+} = {}) {
   const controller = new AbortController();
   let timedOut = false;
 
@@ -82,13 +186,32 @@ async function apiGet(path, { timeout = 5000, signal: externalSignal, headers = 
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   const url = `${base}${cleanPath}`;
 
+  const requestHeaders = {
+    Accept: 'application/json',
+    ...headers,
+  };
+
+  if (body !== undefined && !requestHeaders['Content-Type']) {
+    requestHeaders['Content-Type'] = 'application/json';
+  }
+
+  // Token attachment logic:
+  // If auth is explicitly false, do not attach token.
+  // Otherwise, attach token for non-public endpoints if token exists in session.
+  const isPublic = isPublicEndpoint(cleanPath);
+  const shouldAttachToken = auth === true || (auth !== false && !isPublic);
+  const token = getStoredToken();
+  if (shouldAttachToken && token && !requestHeaders['Authorization']) {
+    requestHeaders['Authorization'] = `Bearer ${token}`;
+  }
+
   try {
     const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        ...headers,
-      },
+      method,
+      headers: requestHeaders,
+      body: body !== undefined
+        ? (typeof body === 'string' ? body : JSON.stringify(body))
+        : undefined,
       signal: controller.signal,
     });
 
@@ -99,10 +222,20 @@ async function apiGet(path, { timeout = 5000, signal: externalSignal, headers = 
       } catch {
         // Non-JSON response
       }
+      if (response.status === 401 && shouldAttachToken) {
+        clearSession();
+      }
       const message = errorBody?.message || `Backend returned HTTP ${response.status} (${response.statusText})`;
       throw new HttpError(response.status, response.statusText, message, errorBody);
     }
 
+    if (response.status === 204) {
+      return null;
+    }
+    const contentType = response.headers?.get?.('content-type');
+    if (contentType && !contentType.includes('application/json')) {
+      return await response.text();
+    }
     return await response.json();
   } catch (err) {
     if (timedOut) {
@@ -118,6 +251,98 @@ async function apiGet(path, { timeout = 5000, signal: externalSignal, headers = 
     }
   }
 }
+
+/**
+ * Performs GET requests using apiFetch.
+ */
+export async function apiGet(path, options = {}) {
+  return await apiFetch(path, { ...options, method: 'GET' });
+}
+
+/**
+ * Performs POST requests using apiFetch.
+ */
+export async function apiPost(path, body, options = {}) {
+  return await apiFetch(path, { ...options, method: 'POST', body });
+}
+
+/**
+ * Authenticates user credentials via POST /api/auth/login.
+ * On success, saves JWT and user metadata to sessionStorage and returns AuthResponse.
+ * On failure, throws HttpError without exposing or persisting credentials.
+ *
+ * @param {string} email
+ * @param {string} password
+ * @param {object} options
+ * @returns {Promise<{ token: string, email: string, displayName: string, role: string, userId: string }>}
+ */
+export async function login(email, password, options = {}) {
+  if (!email || !email.trim()) {
+    throw new Error('Email is required');
+  }
+  if (!password) {
+    throw new Error('Password is required');
+  }
+
+  const payload = {
+    email: email.trim(),
+    password,
+  };
+
+  const data = await apiPost('/api/auth/login', payload, {
+    ...options,
+    auth: false,
+  });
+
+  if (data && data.token) {
+    setSession(data);
+  }
+
+  return data;
+}
+
+/**
+ * Logs out the current user by clearing the session from sessionStorage.
+ */
+export function logout() {
+  clearSession();
+}
+
+/**
+ * Registers a new user via POST /api/auth/register.
+ *
+ * @param {string} email
+ * @param {string} password
+ * @param {string} displayName
+ * @param {object} options
+ * @returns {Promise<{ token: string, email: string, displayName: string, role: string, userId: string }>}
+ */
+export async function register(email, password, displayName, options = {}) {
+  if (!email || !email.trim()) {
+    throw new Error('Email is required');
+  }
+  if (!password) {
+    throw new Error('Password is required');
+  }
+
+  const payload = {
+    email: email.trim(),
+    password,
+    displayName: displayName?.trim() || email.split('@')[0],
+  };
+
+  const data = await apiPost('/api/auth/register', payload, {
+    ...options,
+    auth: false,
+  });
+
+  if (data && data.token) {
+    setSession(data);
+  }
+
+  return data;
+}
+
 
 /**
  * Checks whether an error represents a genuine network / connectivity failure

@@ -3,6 +3,7 @@ import {
   IconLogo,
   IconSearch,
   IconRefresh,
+  IconLogOut,
   ServiceIcon,
 } from './Icons';
 
@@ -15,6 +16,8 @@ export function TopNav({
   onRefresh,
   onOpenBackendDetails,
   isDemoFallback = false,
+  user = null,
+  onLogout = null,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -136,10 +139,41 @@ export function TopNav({
           <IconRefresh size={16} />
         </button>
 
-        {/* User Profile Avatar */}
-        <div className="user-profile-avatar" title="Atharv (Dev)">
-          <span>A</span>
-        </div>
+        {/* User Profile Avatar & Logout */}
+        {user ? (
+          <div className="top-nav-user-group">
+            <div
+              className="user-profile-avatar"
+              title={`${user.displayName || user.email} (${user.role || 'USER'})`}
+            >
+              <span>
+                {(user.displayName?.[0] || user.email?.[0] || 'U').toUpperCase()}
+              </span>
+            </div>
+            <div className="user-profile-meta">
+              <span className="user-profile-name" title={user.email}>
+                {user.displayName || user.email}
+              </span>
+              <span className="user-profile-role">{user.role || 'USER'}</span>
+            </div>
+            {onLogout && (
+              <button
+                type="button"
+                className="nav-logout-btn"
+                onClick={onLogout}
+                title="Sign out of ImpactGraph"
+                aria-label="Sign out"
+              >
+                <IconLogOut size={13} />
+                <span className="logout-text">Logout</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="user-profile-avatar" title="Guest">
+            <span>G</span>
+          </div>
+        )}
       </div>
     </header>
   );

@@ -6,6 +6,9 @@ import {
   fetchProjectGraph,
   analyzeChangeImpact,
   checkBackendHealth,
+  getStoredUser,
+  getStoredToken,
+  logout,
   API_BASE_URL,
 } from './services/impactService';
 import { TopNav } from './components/TopNav';
@@ -16,9 +19,14 @@ import { GraphView } from './components/GraphView';
 import { ImpactPanel } from './components/ImpactPanel';
 import { BackendStatusModal } from './components/BackendStatusModal';
 import { ServicesDirectoryModal } from './components/ServicesDirectoryModal';
+import { LoginView } from './components/LoginView';
 import './App.css';
 
 function App() {
+  // Authentication session state restored from sessionStorage on page load / refresh
+  const [currentUser, setCurrentUser] = useState(() => getStoredUser());
+  const [authToken, setAuthToken] = useState(() => getStoredToken());
+
   // Backend health status state
   const [healthData, setHealthData] = useState(null);
   const [backendLoading, setBackendLoading] = useState(true);
@@ -47,6 +55,18 @@ function App() {
   const [isBackendModalOpen, setIsBackendModalOpen] = useState(false);
   const [isServicesModalOpen, setIsServicesModalOpen] = useState(false);
 
+  // Logout handler: clears session storage, resets user/auth state, and clears loaded project data
+  const handleLogout = useCallback(() => {
+    logout();
+    setAuthToken(null);
+    setCurrentUser(null);
+    setProjects([]);
+    setGraphData(null);
+    setImpactResult(null);
+    setAnalyzedServiceId(null);
+    setApiError(null);
+  }, []);
+
   // Primary Health Check function (e.g. for user refresh button)
   const checkHealth = useCallback(async () => {
     setBackendLoading(true);
@@ -57,12 +77,16 @@ function App() {
       setHealthData(data);
       setBackendError(null);
 
-      // Refresh persisted projects list when backend is accessible
-      try {
-        const projectsList = await fetchProjects({ timeout: 4000 });
-        setProjects(projectsList);
-      } catch {
-        // Non-fatal if project listing fails
+      // Refresh persisted projects list when authenticated and backend is accessible
+      if (getStoredToken()) {
+        try {
+          const projectsList = await fetchProjects({ timeout: 4000 });
+          setProjects(projectsList);
+        } catch (err) {
+          if (err?.status === 401) {
+            handleLogout();
+          }
+        }
       }
     } catch (err) {
       setBackendError(
@@ -73,7 +97,20 @@ function App() {
       setBackendLoading(false);
       setLastChecked(new Date().toLocaleTimeString());
     }
-  }, []);
+  }, [handleLogout]);
+
+  // Login success handler: records session token and user profile into state
+  const handleLoginSuccess = useCallback((authResponse) => {
+    setAuthToken(authResponse.token);
+    setCurrentUser({
+      userId: authResponse.userId,
+      email: authResponse.email,
+      displayName: authResponse.displayName,
+      role: authResponse.role,
+    });
+    setApiError(null);
+    checkHealth();
+  }, [checkHealth]);
 
   // Initial backend check and projects loading on mount
   useEffect(() => {
@@ -86,13 +123,17 @@ function App() {
           setBackendError(null);
         }
 
-        try {
-          const projectsList = await fetchProjects({ timeout: 4000 });
-          if (!ignore) {
-            setProjects(projectsList);
+        if (getStoredToken()) {
+          try {
+            const projectsList = await fetchProjects({ timeout: 4000 });
+            if (!ignore) {
+              setProjects(projectsList);
+            }
+          } catch (err) {
+            if (!ignore && err?.status === 401) {
+              handleLogout();
+            }
           }
-        } catch {
-          // Non-fatal if project listing fails
         }
       } catch (err) {
         if (!ignore) {
@@ -113,7 +154,7 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [handleLogout]);
 
   // Load graph topology whenever the preset or selected project changes
   useEffect(() => {
@@ -155,6 +196,10 @@ function App() {
         }
       } catch (err) {
         if (err.name !== 'AbortError') {
+          if (err?.status === 401) {
+            handleLogout();
+            return;
+          }
           setApiError(err.message || 'Failed to load graph topology from backend');
           if (selectedProjectId != null) {
             setGraphData(null);
@@ -164,12 +209,14 @@ function App() {
       }
     }
 
-    loadGraph();
+    if (authToken) {
+      loadGraph();
+    }
 
     return () => {
       controller.abort();
     };
-  }, [currentPreset, selectedProjectId]);
+  }, [currentPreset, selectedProjectId, authToken, handleLogout]);
 
   // Execute explicit change impact analysis
   const handleAnalyze = useCallback(async () => {
@@ -189,17 +236,21 @@ function App() {
       setAnalyzedServiceId(proposedServiceId);
       setApiError(null);
     } catch (err) {
+      if (err?.status === 401) {
+        handleLogout();
+        return;
+      }
       setApiError(err.message || 'Impact analysis request failed');
       setImpactResult(null);
       setAnalyzedServiceId(null);
     } finally {
       setImpactLoading(false);
     }
-  }, [proposedServiceId, currentPreset, selectedProjectId]);
+  }, [proposedServiceId, currentPreset, selectedProjectId, handleLogout]);
 
   // If already analyzed and user toggles architecture preset, re-evaluate automatically
   useEffect(() => {
-    if (!analyzedServiceId) {
+    if (!analyzedServiceId || !authToken) {
       return;
     }
 
@@ -220,6 +271,10 @@ function App() {
         }
       } catch (err) {
         if (!ignore && err.name !== 'AbortError') {
+          if (err?.status === 401) {
+            handleLogout();
+            return;
+          }
           setApiError(err.message || 'Impact analysis request failed');
         }
       } finally {
@@ -235,7 +290,7 @@ function App() {
       ignore = true;
       controller.abort();
     };
-  }, [currentPreset, selectedProjectId, analyzedServiceId]);
+  }, [currentPreset, selectedProjectId, analyzedServiceId, authToken, handleLogout]);
 
   // Handle service selection (from dropdown, graph node click, or suggested scenario chips)
   const handleSelectService = useCallback(
@@ -278,6 +333,16 @@ function App() {
     }
   };
 
+  // Render Login Screen if user has no active authentication token or profile
+  if (!authToken || !currentUser) {
+    return (
+      <LoginView
+        onLoginSuccess={handleLoginSuccess}
+        healthData={healthData}
+      />
+    );
+  }
+
   const services = graphData?.services || [];
   const dependencies = graphData?.dependencies || [];
   const isDemoFallback = Boolean(graphData?.isFallback || impactResult?.isFallback);
@@ -294,6 +359,8 @@ function App() {
         onRefresh={checkHealth}
         onOpenBackendDetails={() => setIsBackendModalOpen(true)}
         isDemoFallback={isDemoFallback}
+        user={currentUser}
+        onLogout={handleLogout}
       />
 
       <div className="app-body-container">
