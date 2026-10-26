@@ -76,11 +76,11 @@
 			<scope>runtime</scope>
 		</dependency>
 
-		<!-- In-Memory H2 Database for Unit/Integration Tests -->
+		<!-- In-Memory H2 Database for Unit/Integration Tests and Local Dev -->
 		<dependency>
 			<groupId>com.h2database</groupId>
 			<artifactId>h2</artifactId>
-			<scope>test</scope>
+			<scope>runtime</scope>
 		</dependency>
 
 		<!-- Testing: JUnit, Mockito, Spring Test -->

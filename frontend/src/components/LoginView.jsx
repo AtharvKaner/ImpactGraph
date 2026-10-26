@@ -47,6 +47,31 @@ export function LoginView({ onLoginSuccess, healthData = null }) {
     }
   };
 
+  const handleOpenDemo = async () => {
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      // First attempt authenticating with seeded demo account
+      const authResponse = await login('demo@impactgraph.io', 'DemoPassword123!');
+      if (onLoginSuccess) {
+        onLoginSuccess(authResponse, { openDemo: true });
+      }
+    } catch {
+      // Fallback: If login fails (e.g. backend offline), log in as guest demo user
+      if (onLoginSuccess) {
+        onLoginSuccess({
+          token: 'demo-guest-jwt-token',
+          userId: 'demo-user-id',
+          email: 'demo@impactgraph.io',
+          displayName: 'Demo Engineer',
+          role: 'DEVELOPER',
+        }, { openDemo: true });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const isBackendOnline = Boolean(healthData && healthData.status === 'UP');
 
   return (
@@ -156,6 +181,27 @@ export function LoginView({ onLoginSuccess, healthData = null }) {
               ) : (
                 <span>Sign In →</span>
               )}
+            </button>
+
+            <div className="login-divider">
+              <span>OR</span>
+            </div>
+
+            <button
+              type="button"
+              className="login-demo-action-btn"
+              onClick={handleOpenDemo}
+              disabled={loading}
+              title="Open ready-to-explore multi-service architecture demo"
+            >
+              <div className="login-demo-btn-left">
+                <span className="demo-lightning-icon">⚡</span>
+                <div className="demo-btn-texts">
+                  <span className="demo-btn-heading">Open Demo Project (Instant Preview)</span>
+                  <span className="demo-btn-desc">Explore 8-service e-commerce topology, blast radius & security findings</span>
+                </div>
+              </div>
+              <span className="demo-btn-arrow">&rarr;</span>
             </button>
           </form>
 

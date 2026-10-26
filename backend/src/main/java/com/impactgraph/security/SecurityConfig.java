@@ -66,6 +66,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/health").permitAll()
                 .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
                 .requestMatchers("/api/transparency/public").permitAll()
+                .requestMatchers("/api/github/**").permitAll()
+                .requestMatchers("/api/projects/demo").permitAll()
                 // Admin-only endpoints
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/audit/**").hasRole("ADMIN")

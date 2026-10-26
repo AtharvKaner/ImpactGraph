@@ -53,6 +53,11 @@ public class ProjectController {
         return ResponseEntity.ok(projectService.getAllProjects(user));
     }
 
+    @GetMapping("/demo")
+    public ResponseEntity<ProjectResponse> getDemoProject() {
+        return ResponseEntity.ok(projectService.getOrCreateDemoProject());
+    }
+
     @GetMapping("/{projectId}")
     public ResponseEntity<ProjectResponse> getProjectById(
             @PathVariable("projectId") Long projectId,

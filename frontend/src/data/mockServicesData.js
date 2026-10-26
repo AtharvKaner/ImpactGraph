@@ -40,16 +40,18 @@ const ECOMMERCE_DEPENDENCIES = [
   { source: 'Auth Service', target: 'Audit Logger' },
 ];
 
-// Layout positions for React Flow nodes matching the reference design
+// Layout positions for React Flow nodes matching the 4-tier reference architecture
 export const NODE_POSITIONS = {
-  'Storefront Web': { x: 270, y: 30 },
-  'Checkout Service': { x: 270, y: 150 },
-  'Auth Service': { x: 50, y: 280 },
-  'Order Service': { x: 270, y: 280 },
-  'Payment Service': { x: 490, y: 280 },
-  'Inventory Service': { x: 50, y: 420 },
-  'Notification Service': { x: 270, y: 420 },
-  'Audit Logger': { x: 490, y: 420 },
+  'Storefront Web': { x: 180, y: 30 },
+  'Mobile App Gateway': { x: 450, y: 30 },
+  'Checkout Service': { x: 180, y: 160 },
+  'Customer Profile Service': { x: 450, y: 160 },
+  'Order Service': { x: 180, y: 290 },
+  'Payment Service': { x: 450, y: 290 },
+  'Inventory Service': { x: 180, y: 430 },
+  'Notification Service': { x: 450, y: 430 },
+  'Auth Service': { x: 50, y: 290 },
+  'Audit Logger': { x: 620, y: 430 },
 };
 
 // Preset 2: Circular Dependency Example

@@ -87,7 +87,7 @@ Before running the project on Windows, verify that the following prerequisites a
 
 ## Environment Variables
 
-Database credentials and secrets are **strictly externalized** and never hardcoded in repository files.
+Database credentials, secrets, and integration keys are **strictly externalized** and never hardcoded in repository files.
 
 | Variable Name | Default Value | Description |
 |---|---|---|
@@ -98,9 +98,16 @@ Database credentials and secrets are **strictly externalized** and never hardcod
 | `DB_PASSWORD` | *(none / empty)* | **Required** for local PostgreSQL if SCRAM-SHA-256 auth is enabled |
 | `SPRING_DATASOURCE_PASSWORD` | *(falls back to DB_PASSWORD)* | Alternative Spring Boot datasource password variable |
 | `SPRING_DATASOURCE_URL` | *(derived from DB_HOST/PORT/NAME)* | Full JDBC URL override (e.g. `jdbc:postgresql://localhost:5432/impactgraph`) |
+| `SPRING_JPA_HIBERNATE_DDL_AUTO` | `update` | JPA schema DDL mode (`update`, `validate`, `none`) |
 | `PORT` | `8080` | Backend HTTP server port |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:3000` | Allowed frontend origins |
 | `VITE_API_BASE_URL` | `http://localhost:8080` | Frontend backend API target |
+| `JWT_SECRET` | *(none / empty)* | **Required** for production: HMAC-SHA512 signing key (minimum 64 characters) |
+| `JWT_EXPIRATION_MS` | `86400000` | JWT token validity window (defaults to 24 hours in ms) |
+| `ADMIN_BOOTSTRAP_EMAIL` | *(none / empty)* | Initial administrator email to provision on first startup |
+| `ADMIN_BOOTSTRAP_PASSWORD` | *(none / empty)* | Initial administrator password (must meet complexity requirements) |
+| `GITHUB_WEBHOOK_SECRET` | *(none / empty)* | Secret for HMAC-SHA256 GitHub pull request webhook signature verification |
+| `AI_PROVIDER` | `deterministic` | Offline deterministic security explanation engine |
 
 Templates are provided in `.env.example` (root) and `backend/.env.example`.
 
@@ -364,16 +371,118 @@ The backend exposes a fully validated CRUD API for modeling architectural entiti
 
 ---
 
-## Verification & Validation
+## Security, AST Analysis & CI/CD Integrations
 
-Both test suites and builds have been verified:
-- **Backend Tests:** 71 automated tests pass with `0 errors, 0 failures` (covering CRUD, validation rules, cross-project checks, self-dependency rejection, duplicate detection, graph engine compatibility, and health check preservation).
-- **Frontend Build:** `vite build` and `oxlint` compile with `0 warnings, 0 errors`.
+ImpactGraph features an enterprise-grade AST code analyzer and security rule engine (`JavaSourceAnalyzer`, `SecurityRuleEngine`) covering OWASP/CWE security rules:
+
+| Rule ID | Severity | Category | Target / Description |
+|---|---|---|---|
+| `SEC-AUTH-001` | HIGH | Authentication | Overly permissive route (`permitAll()` on non-public endpoints) |
+| `SEC-AUTHZ-002` | HIGH | Authorization | Missing `@PreAuthorize` or role enforcement on mutating/admin endpoints |
+| `SEC-TAINT-003` | CRITICAL | Injection | SQL/HQL injection vulnerability via unparameterized string concatenation |
+| `SEC-DATA-004` | MEDIUM | Data Protection | Hardcoded secret or credential literal detected in source code |
+| `SEC-CONF-005` | MEDIUM | Configuration | Wildcard CORS origin (`*` with credentials or exposed endpoints) |
+
+Endpoints exposed:
+- `POST /api/security/analyze`: Triggers AST code analysis, rule evaluation, and targeted test selection across project source files.
+- `GET /api/security/findings?projectId={id}`: Lists findings filtered by status or project with tenant isolation.
+- `POST /api/security/findings/{id}/verify`: Re-evaluates live source code against finding rules, accurately verifying remediation or marking regression.
+- `POST /api/security/ai-explanation`: Generates structured remediation guidance, risk summaries, and code diff suggestions.
+- `GET /api/security/history?projectId={id}`: Lists historical analysis runs with statistical breakdown.
+- `GET /api/security/inventory?projectId={id}`: Returns API inventory with authentication, authorization, and drift statuses.
 
 ---
 
-## Roadmap
+## Database Setup, Constraints & Schema Evolution
 
-- **Milestone 1 (Complete):** Initial runnable skeleton, environment-based configuration, health check endpoint, React UI.
-- **Milestone 2 (In Progress):** Core Backend & Data Model (Projects, Services, APIs, Dependencies, Integrity Constraints), CNS Security.
-- **Milestone 3:** Core Software Change Impact Analysis engine, AST/dependency parsing, and React Flow graph visualization.
+### Entities & Constraints
+The persistence layer manages relational entities: `Project`, `Service`, `Api`, `Dependency`, `AppUser`, `AuditEvent`, `TransparencyReport`, `SecurityFinding`, and `AnalysisRun`.
+
+Key integrity constraints:
+- `analysis_runs` Table:
+  - Unique Constraint: `uk_runs_delivery_id` on `deliveryId VARCHAR(100)`.
+  - ANSI SQL / PostgreSQL / H2 Semantics: `deliveryId` allows multiple `NULL` values (used by manual dashboard runs and test fixtures) while enforcing strict uniqueness on non-null values (GitHub webhook delivery UUIDs).
+  - Performance Indexes: `idx_runs_timestamp`, `idx_runs_project`, `idx_runs_sha`.
+- `dependencies` Table:
+  - Unique Constraint: Unique `(source_service_id, target_service_id)` per project.
+  - Foreign Keys: Cascading delete on services and projects.
+
+### Production Schema Evolution & Migrations
+In development and automated test profiles, Hibernate generates and updates schemas via `spring.jpa.hibernate.ddl-auto=update` or `create-drop`.
+
+For production environments enforcing `spring.jpa.hibernate.ddl-auto=validate`, apply the following migration DDL:
+
+```sql
+-- Migration: Add delivery_id column and unique constraint to analysis_runs
+ALTER TABLE analysis_runs
+    ADD COLUMN IF NOT EXISTS delivery_id VARCHAR(100);
+
+-- PostgreSQL partial unique index (or standard unique constraint):
+CREATE UNIQUE INDEX IF NOT EXISTS uk_runs_delivery_id
+    ON analysis_runs (delivery_id)
+    WHERE delivery_id IS NOT NULL;
+```
+
+> **Database Safety Notice:** Automated tests run exclusively against an isolated in-memory H2 database (`jdbc:h2:mem:impactgraph_test`). No automated scripts connect to or modify external or production PostgreSQL databases. PostgreSQL schema migration verification on a live cluster must be performed within an isolated staging database.
+
+---
+
+## AI Configuration & Remediation Engine
+
+ImpactGraph supports automated remediation explanations via the pluggable `AiExplanationService` interface:
+
+1. **Deterministic Offline Engine (`AI_PROVIDER=deterministic`, default):**
+   - Requires zero external network calls or third-party API keys.
+   - Grounded in curated CWE/OWASP vulnerability playbooks with tailored contextual code diffs and targeted JUnit test suggestions.
+2. **No external AI integration:**
+   - The demo does not send repository contents, findings, or credentials to an external AI provider.
+   - Explanations remain reproducible because they are generated from deterministic static-analysis rules.
+
+---
+
+## GitHub Webhook Configuration & Idempotency
+
+ImpactGraph integrates with GitHub Pull Request workflows to automatically evaluate change impact and security posture.
+
+### Webhook Setup in GitHub
+1. Go to repository **Settings > Webhooks > Add webhook**.
+2. **Payload URL:** `https://your-domain.com/api/github/webhook`
+3. **Content type:** `application/json`
+4. **Secret:** Configured value matching `GITHUB_WEBHOOK_SECRET`.
+5. **Which events would you like to trigger this webhook?:** Select **Let me select individual events > Pull requests**.
+
+### Security & Deduplication Architecture
+- **HMAC-SHA256 Signature Verification:**
+  - Incoming requests must supply `X-Hub-Signature-256: sha256=<signature>`.
+  - Verified using constant-time comparison (`MessageDigest.isEqual`) against the configured secret.
+  - If `GITHUB_WEBHOOK_SECRET` is not set or the signature is invalid, the request is rejected with `401 Unauthorized`.
+- **Three-Tier Concurrency-Safe Deduplication:**
+  1. *In-Memory Fast Filter:* Atomic `ConcurrentHashMap.newKeySet().add(deliveryId)` discards in-flight duplicate deliveries within the same JVM instance.
+  2. *Durable Pre-Check:* `runRepository.existsByDeliveryId(deliveryId)` detects deliveries recorded in prior executions or JVM lifecycles.
+  3. *Database Unique Constraint (`uk_runs_delivery_id`):* Distributed or concurrent worker races are caught upon `runRepository.saveAndFlush(run)` by intercepting `DataIntegrityViolationException`, gracefully returning `{"status": "IGNORED", "reason": "Duplicate delivery ID"}`.
+
+---
+
+## Verification & Validation
+
+Both test suites and builds have been verified:
+- **Backend Tests:** **223 automated tests** pass with `0 failures, 0 errors, 0 skipped` (including unit, integration, AST analyzer, rule engine, multi-threaded webhook concurrency, finding verification, RBAC authorization, and H2 database constraint tests).
+- **Frontend Tests:** **37 tests across 20 suites** pass with `0 failures` (covering impact calculation, authentication, session lifecycle, security navigation, repository import, revision comparison, public transparency, and offline fallback).
+- **Frontend Linter (`oxlint`):** no warnings or errors.
+- **Frontend Production Build (`vite build`):** Compiled cleanly into production bundles in `dist/`.
+
+---
+
+## Known Limitations & Operational Considerations
+
+1. **Local vs. Live PostgreSQL Verification:**
+   - Automated CI/CD test suites run against in-memory H2 database.
+   - Live PostgreSQL schema compatibility has not been executed against a production cluster during testing to prevent unintended database mutations.
+2. **AST Source Code Scope:**
+   - AST analysis parses Java source files located in the local project workspace.
+   - For pull request webhooks in remote environments, the webhook handler must be paired with a CI runner or repository checkout worker that clones the target commit.
+3. **Distributed In-Memory Cache:**
+   - The first-tier deduplication set is process-local. In a horizontally scaled cluster, deduplication across nodes relies durably on database uniqueness constraints (`uk_runs_delivery_id`). A distributed cache (e.g., Redis) can be introduced for high-throughput webhook ingress.
+4. **Automated Schema Evolution:**
+   - Spring Boot runs with `spring.jpa.hibernate.ddl-auto=update` in development. Production environments should adopt versioned migration tools (Flyway or Liquibase).
+
