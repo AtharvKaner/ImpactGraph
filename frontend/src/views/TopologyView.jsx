@@ -52,7 +52,7 @@ export function TopologyView({
           <h2 className="view-title">Topology & Architecture Health Analyzer</h2>
           <p className="view-subtitle">
             Cyclomatic cycle detection, graph centrality scores, and coupling ratio metrics for{' '}
-            <strong>{selectedProjectId ? `PostgreSQL Project #${selectedProjectId}` : (graphData?.name || currentPreset)}</strong>
+            <strong>{selectedProjectId ? (graphData?.name || `Repository Project #${selectedProjectId}`) : (graphData?.name || currentPreset)}</strong>
           </p>
         </div>
       </div>

@@ -36,6 +36,13 @@ export function ServiceSelector({
   const selectedService = services.find((s) => s.id === proposedServiceId);
   const isPendingAnalysis = proposedServiceId && !hasAnalyzed;
 
+  const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const demoProject = projects.find((p) => p.name && p.name.includes('[Demo]'));
+  const isDemoProjectActive = Boolean(
+    (!selectedProjectId && currentPreset === DATASET_PRESETS.ECOMMERCE_DAG) ||
+    (selectedProject?.name && selectedProject.name.includes('[Demo]'))
+  );
+
   return (
     <div className="control-bar-card">
       {/* 1. Architecture Setup Group */}
@@ -45,9 +52,13 @@ export function ServiceSelector({
           <span className="control-label">
             {selectedProjectId ? 'Persisted Architecture' : 'Demonstration Architecture'}
           </span>
-          {selectedProjectId ? (
-            <span className="persisted-notice-pill" title="Loaded live from PostgreSQL database">
-              PostgreSQL Project
+          {isDemoProjectActive ? (
+            <span className="simulation-notice-pill" title="Interactive 8-service multi-tier demonstration project">
+              Demo Active
+            </span>
+          ) : selectedProjectId ? (
+            <span className="persisted-notice-pill" title="Analyzed repository architecture">
+              Repository Project
             </span>
           ) : (
             <span className="simulation-notice-pill" title="Pre-configured demonstration dataset">
@@ -59,8 +70,14 @@ export function ServiceSelector({
           <div className="segmented-toggle" role="group" aria-label="Demonstration Architecture">
             <button
               type="button"
-              className={`toggle-btn ${!selectedProjectId && currentPreset === DATASET_PRESETS.ECOMMERCE_DAG ? 'active' : ''}`}
-              onClick={() => onChangePreset(DATASET_PRESETS.ECOMMERCE_DAG)}
+              className={`toggle-btn ${isDemoProjectActive ? 'active' : ''}`}
+              onClick={() => {
+                if (demoProject) {
+                  onSelectProject(demoProject.id);
+                } else {
+                  onChangePreset(DATASET_PRESETS.ECOMMERCE_DAG);
+                }
+              }}
               disabled={loading}
               title="Standard 8-service e-commerce microservices (Acyclic DAG)"
             >
@@ -123,7 +140,7 @@ export function ServiceSelector({
             {selectedProjectId ? (
               <span className="meta-badge-item badge-persisted">
                 <IconCheckShield size={13} className="text-primary" />
-                PostgreSQL ({services.length} services • {edgeCount} edges)
+                Repository Architecture ({services.length} services • {edgeCount} edges)
               </span>
             ) : hasCycle ? (
               <span className="meta-badge-item badge-warning">

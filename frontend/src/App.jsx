@@ -131,7 +131,7 @@ function App() {
     handleSelectNav('studio');
   }, [handleSelectNav]);
 
-  // Open demo project immediately
+  // Open demo project immediately and navigate to studio
   const handleOpenDemoProject = useCallback(async () => {
     setApiError(null);
     try {
@@ -147,7 +147,7 @@ function App() {
         setProposedServiceId('Payment Service');
         setAnalyzedServiceId(null);
         setImpactResult(null);
-        handleSelectNav('overview');
+        handleSelectNav('studio');
       }
     } catch (err) {
       console.warn('Failed to open demo project:', err);
@@ -268,7 +268,7 @@ function App() {
             window.sessionStorage.setItem('impactgraph_selected_project_id', String(demo.id));
           }
           setProposedServiceId('Payment Service');
-          handleSelectNav('overview');
+          handleSelectNav('studio');
         }
       } catch (err) {
         console.warn('Could not auto-select demo project:', err);
@@ -425,21 +425,26 @@ function App() {
   }, [currentPreset, selectedProjectId, authToken, handleLogout]);
 
   // Execute explicit change impact analysis
-  const handleAnalyze = useCallback(async () => {
-    if (!proposedServiceId) {
+  const handleAnalyze = useCallback(async (serviceIdOverride = null) => {
+    const targetServiceId = (typeof serviceIdOverride === 'string' && serviceIdOverride.trim())
+      ? serviceIdOverride.trim()
+      : proposedServiceId;
+
+    if (!targetServiceId) {
       return;
     }
 
+    setProposedServiceId(targetServiceId);
     setImpactLoading(true);
     setApiError(null);
 
     try {
-      const result = await analyzeChangeImpact(proposedServiceId, currentPreset, {
+      const result = await analyzeChangeImpact(targetServiceId, currentPreset, {
         projectId: selectedProjectId,
         timeout: 5000,
       });
       setImpactResult(result);
-      setAnalyzedServiceId(proposedServiceId);
+      setAnalyzedServiceId(targetServiceId);
       setApiError(null);
     } catch (err) {
       if (err?.status === 401) {

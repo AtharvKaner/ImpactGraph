@@ -40,18 +40,24 @@ const ECOMMERCE_DEPENDENCIES = [
   { source: 'Auth Service', target: 'Audit Logger' },
 ];
 
-// Layout positions for React Flow nodes matching the 4-tier reference architecture
+// Layout positions for React Flow nodes matching the multi-tier reference architecture
 export const NODE_POSITIONS = {
-  'Storefront Web': { x: 180, y: 30 },
-  'Mobile App Gateway': { x: 450, y: 30 },
-  'Checkout Service': { x: 180, y: 160 },
-  'Customer Profile Service': { x: 450, y: 160 },
-  'Order Service': { x: 180, y: 290 },
-  'Payment Service': { x: 450, y: 290 },
-  'Inventory Service': { x: 180, y: 430 },
-  'Notification Service': { x: 450, y: 430 },
-  'Auth Service': { x: 50, y: 290 },
-  'Audit Logger': { x: 620, y: 430 },
+  // Built-in Demo E-Commerce Platform (8 Services)
+  'Storefront Web': { x: 420, y: 40 },
+  'Auth Service': { x: 100, y: 210 },
+  'Checkout Service': { x: 520, y: 210 },
+  'Order Service': { x: 100, y: 390 },
+  'Payment Service': { x: 480, y: 390 },
+  'Inventory Service': { x: 840, y: 390 },
+  'Notification Service': { x: 280, y: 570 },
+  'Audit Logger': { x: 680, y: 570 },
+
+  // Auxiliary / In-Memory Fallbacks
+  'API Gateway': { x: 420, y: 120 },
+  'Kafka Broker': { x: 280, y: 740 },
+  'Redis Cache': { x: 680, y: 740 },
+  'Customer Profile Service': { x: 740, y: 210 },
+  'Mobile App Gateway': { x: 680, y: 40 },
 };
 
 // Preset 2: Circular Dependency Example

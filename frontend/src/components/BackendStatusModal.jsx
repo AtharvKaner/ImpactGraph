@@ -15,7 +15,7 @@ export function BackendStatusModal({
   error,
   onRefresh,
   lastChecked,
-  apiBaseUrl,
+  _apiBaseUrl,
 }) {
   if (!isOpen) return null;
 
@@ -54,13 +54,13 @@ export function BackendStatusModal({
                 <IconAlertTriangle size={20} className="icon-alert" />
               )}
               <div className="status-pill-text">
-                <strong>{healthData ? 'Backend Service Online' : 'Backend Unreachable'}</strong>
+                <strong>{healthData ? 'Analysis Engine Online' : 'Analysis Engine Offline'}</strong>
                 <span>
                   {loading
-                    ? 'Pinging backend health endpoint...'
+                    ? 'Checking analysis service connectivity...'
                     : healthData
-                    ? 'Connected to Spring Boot on port 8080 (UP)'
-                    : 'Unable to reach backend health endpoint'}
+                    ? 'Connected to ImpactGraph Analysis Engine (Operational)'
+                    : 'Unable to connect to analysis engine service'}
                 </span>
               </div>
             </div>
@@ -78,21 +78,21 @@ export function BackendStatusModal({
           {/* Details Table */}
           <div className="modal-details-table">
             <div className="detail-item">
-              <span className="detail-key">Health Endpoint</span>
-              <code className="detail-code">{(apiBaseUrl || 'http://localhost:8080').replace(/\/+$/, '')}/api/health</code>
+              <span className="detail-key">Service Endpoint</span>
+              <code className="detail-code">/api/health</code>
             </div>
             <div className="detail-item">
-              <span className="detail-key">Data Source</span>
+              <span className="detail-key">Analysis Mode</span>
               <span className="detail-val">
-                {healthData ? 'Live Backend REST API' : 'Offline Demonstration Fallback'}
+                {healthData ? 'Live Repository & Static AST Engine' : 'Offline Mode'}
               </span>
             </div>
             <div className="detail-item">
-              <span className="detail-key">Backend Service</span>
-              <span className="detail-val">{healthData?.service || 'ImpactGraph Backend'}</span>
+              <span className="detail-key">System Engine</span>
+              <span className="detail-val">{healthData?.service || 'ImpactGraph Analysis Platform'}</span>
             </div>
             <div className="detail-item">
-              <span className="detail-key">Reported Health</span>
+              <span className="detail-key">Service Status</span>
               <span className={`detail-status-badge ${healthData ? 'badge-ok' : 'badge-err'}`}>
                 {healthData?.status || (loading ? 'Checking...' : 'OFFLINE')}
               </span>
@@ -107,22 +107,20 @@ export function BackendStatusModal({
             </div>
           </div>
 
-          {/* Architecture / Integration Notice */}
+          {/* System Capability Overview */}
           <div className="modal-notice-box">
-            <strong>Architecture & Persistence Notice:</strong>
+            <strong>System Engine Capabilities:</strong>
             <p>
-              Phase 2A features in-memory graph models mirroring backend Java domain records. Live PostgreSQL database persistence integration will connect in Phase 2B.
+              Static AST parser, Git revision diff engine, directed dependency graph traversal, API endpoint correlation, and deterministic security rule evaluation.
             </p>
           </div>
 
           {error && (
             <div className="modal-error-box">
-              <strong>Connection Troubleshooting:</strong>
+              <strong>Connection Notice:</strong>
               <p>{error}</p>
               <p className="error-tip">
-                To start the backend server, run in <code>./backend</code>:
-                <br />
-                <code>.\mvnw.cmd spring-boot:run</code>
+                Ensure the ImpactGraph analysis service is active and listening on the designated network address.
               </p>
             </div>
           )}

@@ -356,6 +356,20 @@
   transform: translateX(3px);
 }
 
+.login-demo-credentials {
+  margin: -2px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.login-demo-credentials strong,
+.login-demo-credentials code {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 /* Card Footer Details */
 .login-card-footer {
   border-top: 1px solid var(--border-subtle);

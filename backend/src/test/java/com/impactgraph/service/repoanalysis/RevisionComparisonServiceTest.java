@@ -112,6 +112,56 @@ class RevisionComparisonServiceTest {
         assertThat(response.totalAffectedCount()).isEqualTo(1);
         assertThat(response.impactPaths()).hasSize(1);
         assertThat(response.impactPaths().get(0).path()).containsExactly("CheckoutService", "PaymentService");
+
+        // Verify evidence-based explanations
+        assertThat(response.explanations()).isNotEmpty();
+        assertThat(response.explanations())
+                .anyMatch(e -> e.targetId().equals("PaymentService") && !e.isPotentialImpactOnly());
+        assertThat(response.explanations())
+                .anyMatch(e -> e.targetId().equals("CheckoutService") && e.isPotentialImpactOnly() && "DIRECT".equals(e.impactType()));
+    }
+
+    @Test
+    @DisplayName("Revision comparison with line hunks captures line numbers and ranges in changed files")
+    void compareRevisions_withLineMetrics_populatesHunksAndEvidence() {
+        Long projectId = 150L;
+        Project project = new Project("E-Commerce Test", "Description");
+        project.setId(projectId);
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+
+        Service payment = new Service("PaymentService", "Source: src/PaymentService.java:10", project);
+        payment.setId(5L);
+        when(serviceRepository.findByProjectId(projectId)).thenReturn(List.of(payment));
+
+        DependencyGraph graph = DependencyGraph.builder().addService("PaymentService").build();
+        when(dependencyService.buildDependencyGraphForProject(projectId)).thenReturn(graph);
+
+        when(gitOperationsService.getDiffBetweenRevisions(any(Path.class), anyString(), anyString()))
+                .thenReturn(List.of(new ChangedFileDto(
+                        "src/PaymentService.java", "MODIFIED", null, null,
+                        12, 4, List.of("L45-L52"), "+ double refundAmount = order.getTotal();"
+                )));
+
+        when(runRepository.save(any(AnalysisRun.class))).thenAnswer(i -> {
+            AnalysisRun r = i.getArgument(0);
+            r.setId(UUID.randomUUID());
+            return r;
+        });
+
+        RevisionComparisonRequest request = new RevisionComparisonRequest(projectId, "HEAD~1", "HEAD");
+        JwtAuthenticatedUser user = new JwtAuthenticatedUser(UUID.randomUUID(), "dev@test.io", "ROLE_DEVELOPER");
+
+        RevisionComparisonResponseDto response = comparisonService.compareRevisions(request, user, "127.0.0.1");
+
+        assertThat(response.changedFiles()).hasSize(1);
+        ChangedFileDto file = response.changedFiles().get(0);
+        assertThat(file.linesAdded()).isEqualTo(12);
+        assertThat(file.linesDeleted()).isEqualTo(4);
+        assertThat(file.changedLineRanges()).containsExactly("L45-L52");
+        assertThat(file.mappedServiceName()).isEqualTo("PaymentService");
+
+        assertThat(response.explanations()).isNotEmpty();
+        assertThat(response.explanations().get(0).sourceEvidence()).contains("L45-L52");
     }
 
     @Test
@@ -148,3 +198,4 @@ class RevisionComparisonServiceTest {
         assertThat(response.impactPaths()).isEmpty();
     }
 }
+

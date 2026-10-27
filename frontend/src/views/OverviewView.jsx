@@ -81,6 +81,119 @@ export function OverviewView({
         </div>
       </div>
 
+      {/* Prominent Top-Level Security Findings Summary Banner */}
+      <div className="overview-security-top-summary">
+        <div className="security-top-header">
+          <div className="security-top-title-wrap">
+            <div className="security-shield-icon">
+              <IconShieldAlert size={22} className={criticalFindings.length > 0 ? 'text-danger' : 'text-warning'} />
+            </div>
+            <div>
+              <h3 className="security-top-title">Security Drift & Vulnerability Findings</h3>
+              <p className="security-top-sub">
+                Static security findings mapped directly to architectural components and exposed routes for <strong>{projectName}</strong>.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn-view-all-security"
+            onClick={() => onNavigate('findings')}
+          >
+            <span>Review All Findings ({findings.length}) &rarr;</span>
+          </button>
+        </div>
+
+        <div className="security-top-metrics-row">
+          <div className="sec-metric-item">
+            <span className="sec-metric-label">Total Findings</span>
+            <span className="sec-metric-val">{findings.length}</span>
+          </div>
+          <div className="sec-metric-item">
+            <span className="sec-metric-label">Critical</span>
+            <span className={`sec-metric-val ${criticalFindings.length > 0 ? 'text-danger' : ''}`}>
+              {criticalFindings.length}
+            </span>
+          </div>
+          <div className="sec-metric-item">
+            <span className="sec-metric-label">High Severity</span>
+            <span className={`sec-metric-val ${highFindings.length > 0 ? 'text-warning' : ''}`}>
+              {highFindings.length}
+            </span>
+          </div>
+          <div className="sec-metric-item">
+            <span className="sec-metric-label">Medium Severity</span>
+            <span className="sec-metric-val">{mediumFindings.length}</span>
+          </div>
+          <div className="sec-metric-item">
+            <span className="sec-metric-label">Resolution Status</span>
+            <span className="sec-metric-val status-text">
+              {openFindings.length} Active / {findings.length - openFindings.length} Verified
+            </span>
+          </div>
+        </div>
+
+        {findings.length > 0 ? (
+          <div className="security-top-findings-chips">
+            <span className="chips-title">High-Priority Findings:</span>
+            {findings.slice(0, 3).map((f) => (
+              <div
+                key={f.id}
+                className="top-finding-chip"
+                onClick={() => onNavigate('findings')}
+                role="button"
+                tabIndex={0}
+              >
+                <span className={`severity-tag tag-${(f.severity || 'MEDIUM').toLowerCase()}`}>{f.severity}</span>
+                <span className="chip-name">{f.title}</span>
+                <span className="chip-comp">({f.affectedComponent})</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="security-empty-banner">
+            <IconCheckShield size={16} className="text-success" />
+            <span>No security vulnerabilities detected in current repository static analysis.</span>
+          </div>
+        )}
+      </div>
+
+      {/* Primary User Workflow Guidance Card */}
+      <div className="overview-workflow-guide-card">
+        <h4 className="workflow-guide-title">Change Impact Analysis Workflow</h4>
+        <div className="workflow-steps-track">
+          <div className="workflow-step active">
+            <div className="step-num">1</div>
+            <div className="step-content">
+              <strong>Select Repository</strong>
+              <span>Active: {projectName}</span>
+            </div>
+          </div>
+          <div className="workflow-step">
+            <div className="step-num">2</div>
+            <div className="step-content">
+              <strong>Inspect Graph</strong>
+              <span>{services.length} services • {dependencies.length} edges</span>
+            </div>
+          </div>
+          <div className="workflow-step">
+            <div className="step-num">3</div>
+            <div className="step-content">
+              <strong>Compare Revisions</strong>
+              <span>Git diff &amp; change mapping</span>
+            </div>
+          </div>
+          <div className="workflow-step">
+            <div className="step-num">4</div>
+            <div className="step-content">
+              <strong>Animate Blast Radius</strong>
+              <span>Downstream APIs &amp; tests</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
       {/* Prominent Demo Experience Banner */}
       {isCurrentlyDemo ? (
         <div className="overview-demo-highlight-banner">

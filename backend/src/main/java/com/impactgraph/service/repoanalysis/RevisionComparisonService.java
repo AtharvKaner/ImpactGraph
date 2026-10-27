@@ -4,6 +4,7 @@ import com.impactgraph.dto.ApiInventoryItemDto;
 import com.impactgraph.dto.ImpactPathDto;
 import com.impactgraph.dto.SecurityFindingDto;
 import com.impactgraph.dto.repoanalysis.ChangedFileDto;
+import com.impactgraph.dto.repoanalysis.ImpactExplanationDto;
 import com.impactgraph.dto.repoanalysis.RevisionComparisonRequest;
 import com.impactgraph.dto.repoanalysis.RevisionComparisonResponseDto;
 import com.impactgraph.entity.AnalysisRun;
@@ -14,6 +15,7 @@ import com.impactgraph.graph.ImpactAnalysisResult;
 import com.impactgraph.graph.ImpactAnalyzer;
 import com.impactgraph.graph.ImpactPath;
 import com.impactgraph.repository.AnalysisRunRepository;
+import com.impactgraph.repository.DependencyRepository;
 import com.impactgraph.repository.ProjectRepository;
 import com.impactgraph.repository.SecurityFindingRepository;
 import com.impactgraph.repository.ServiceRepository;
@@ -51,6 +53,8 @@ public class RevisionComparisonService {
     private final GitOperationsService gitOperationsService;
     private final RepositoryValidationService validationService;
 
+    private final DependencyRepository dependencyRepository;
+
     @Autowired
     public RevisionComparisonService(ProjectService projectService,
                                      ProjectRepository projectRepository,
@@ -60,7 +64,8 @@ public class RevisionComparisonService {
                                      DependencyService dependencyService,
                                      ImpactAnalyzer impactAnalyzer,
                                      GitOperationsService gitOperationsService,
-                                     RepositoryValidationService validationService) {
+                                     RepositoryValidationService validationService,
+                                     @Autowired(required = false) DependencyRepository dependencyRepository) {
         this.projectService = projectService;
         this.projectRepository = projectRepository;
         this.serviceRepository = serviceRepository;
@@ -70,7 +75,23 @@ public class RevisionComparisonService {
         this.impactAnalyzer = impactAnalyzer;
         this.gitOperationsService = gitOperationsService;
         this.validationService = validationService;
+        this.dependencyRepository = dependencyRepository;
     }
+
+    public RevisionComparisonService(ProjectService projectService,
+                                     ProjectRepository projectRepository,
+                                     ServiceRepository serviceRepository,
+                                     SecurityFindingRepository findingRepository,
+                                     AnalysisRunRepository runRepository,
+                                     DependencyService dependencyService,
+                                     ImpactAnalyzer impactAnalyzer,
+                                     GitOperationsService gitOperationsService,
+                                     RepositoryValidationService validationService) {
+        this(projectService, projectRepository, serviceRepository, findingRepository,
+                runRepository, dependencyService, impactAnalyzer, gitOperationsService,
+                validationService, null);
+    }
+
 
     /**
      * Executes revision comparison and change-impact blast radius evaluation.
@@ -128,7 +149,10 @@ public class RevisionComparisonService {
                 String mappedSvc = mapFileToService(file.filePath(), services);
                 if (mappedSvc != null) {
                     directlyChangedServices.add(mappedSvc);
-                    mappedFiles.add(new ChangedFileDto(file.filePath(), file.changeType(), file.oldPath(), mappedSvc));
+                    mappedFiles.add(new ChangedFileDto(
+                            file.filePath(), file.changeType(), file.oldPath(), mappedSvc,
+                            file.linesAdded(), file.linesDeleted(), file.changedLineRanges(), file.summarySnippet()
+                    ));
                 } else {
                     mappedFiles.add(file);
                 }
@@ -189,10 +213,127 @@ public class RevisionComparisonService {
                 }
             }
 
-            // 7. Recommended targeted regression tests
+            // 7. Build structured explanations with source code evidence
+            Map<String, String> edgeEvidenceMap = new HashMap<>();
+            if (dependencyRepository != null) {
+                try {
+                    List<com.impactgraph.entity.Dependency> persistedDeps = dependencyRepository.findBySourceServiceProjectId(projectId);
+                    for (com.impactgraph.entity.Dependency d : persistedDeps) {
+                        if (d.getSourceService() != null && d.getTargetService() != null) {
+                            String key = d.getSourceService().getName() + "->" + d.getTargetService().getName();
+                            String desc = d.getDescription() != null ? d.getDescription() : ("Dependency: " + d.getDependencyType());
+                            edgeEvidenceMap.put(key, desc);
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            List<ImpactExplanationDto> explanations = new ArrayList<>();
+
+            // 7a. Explanations for directly changed services
+            for (String changedSvc : directlyChangedServices) {
+                List<ChangedFileDto> svcFiles = mappedFiles.stream()
+                        .filter(f -> Objects.equals(f.mappedServiceName(), changedSvc))
+                        .toList();
+                String evidence = svcFiles.isEmpty()
+                        ? changedSvc + " modified in target revision"
+                        : svcFiles.get(0).filePath() + (!svcFiles.get(0).changedLineRanges().isEmpty()
+                                ? " (" + String.join(", ", svcFiles.get(0).changedLineRanges()) + ")"
+                                : "");
+                explanations.add(new ImpactExplanationDto(
+                        changedSvc,
+                        "COMPONENT",
+                        changedSvc,
+                        "DIRECT",
+                        List.of(changedSvc),
+                        changedSvc + " [MODIFIED]",
+                        evidence,
+                        "Component " + changedSvc + " contains direct source code modifications between revisions " + baseRevision + " and " + targetRevision + ".",
+                        "HIGH",
+                        List.of("Execute targeted unit test suite for " + changedSvc, "Inspect diff hunks in " + evidence),
+                        List.of(changedSvc + "Test", changedSvc + "IntegrationTest"),
+                        false
+                ));
+            }
+
+            // 7b. Explanations for directly affected services
+            for (String directSvc : directAffected) {
+                String origin = directlyChangedServices.stream()
+                        .filter(c -> graph.hasEdge(directSvc, c))
+                        .findFirst()
+                        .orElse(directlyChangedServices.isEmpty() ? "changed component" : directlyChangedServices.iterator().next());
+                String edgeKey = directSvc + "->" + origin;
+                String edgeEvidence = edgeEvidenceMap.getOrDefault(edgeKey, "Direct dependency: " + directSvc + " depends on " + origin);
+
+                explanations.add(new ImpactExplanationDto(
+                        directSvc,
+                        "COMPONENT",
+                        origin,
+                        "DIRECT",
+                        List.of(directSvc, origin),
+                        directSvc + " -> " + origin,
+                        edgeEvidence,
+                        "Component " + directSvc + " has a direct dependency on " + origin + ". Modifications to " + origin + "'s methods, state, or return types may alter runtime behavior in " + directSvc + ".",
+                        "HIGH",
+                        List.of("Execute integration test suite for " + directSvc, "Verify contract compatibility between " + directSvc + " and " + origin),
+                        List.of(directSvc + "IntegrationTest", directSvc + "Test"),
+                        true
+                ));
+            }
+
+            // 7c. Explanations for transitively affected services
+            for (String transitiveSvc : transitiveAffected) {
+                ImpactPathDto p = pathMap.get(transitiveSvc);
+                String origin = p != null ? p.changedServiceId() : (directlyChangedServices.isEmpty() ? "changed component" : directlyChangedServices.iterator().next());
+                List<String> path = p != null ? p.path() : List.of(transitiveSvc, origin);
+                String pathStr = p != null ? p.pathString() : transitiveSvc + " -> ... -> " + origin;
+                int dist = p != null ? p.distance() : 2;
+
+                explanations.add(new ImpactExplanationDto(
+                        transitiveSvc,
+                        "COMPONENT",
+                        origin,
+                        "TRANSITIVE",
+                        path,
+                        pathStr,
+                        "Transitive reachability across " + dist + " hops: " + pathStr,
+                        "Component " + transitiveSvc + " reaches " + origin + " transitively through " + (dist - 1) + " intermediate service(s). Potential impact if changes in " + origin + " cascade across the dependency chain.",
+                        dist <= 2 ? "HIGH" : "MEDIUM",
+                        List.of("Run integration tests involving " + transitiveSvc + " and downstream dependencies", "Verify telemetry and error handling along " + pathStr),
+                        List.of(transitiveSvc + "IntegrationTest"),
+                        true
+                ));
+            }
+
+            // 7d. Explanations for impacted API endpoints
+            for (ApiInventoryItemDto api : impactedApis) {
+                boolean isDirect = directlyChangedServices.contains(api.controllerName());
+                String origin = directlyChangedServices.isEmpty() ? "changed component" : directlyChangedServices.iterator().next();
+                ImpactPathDto pathDto = pathMap.get(api.controllerName());
+                List<String> pList = pathDto != null ? pathDto.path() : List.of(api.controllerName(), origin);
+                String pStr = pathDto != null ? pathDto.pathString() : api.controllerName();
+                String epEvidence = api.controllerName() + "#" + api.handlerMethod() + " (" + api.method() + " " + api.path() + ")";
+
+                explanations.add(new ImpactExplanationDto(
+                        api.method() + " " + api.path(),
+                        "ENDPOINT",
+                        origin,
+                        isDirect ? "DIRECT" : "TRANSITIVE",
+                        pList,
+                        pStr,
+                        epEvidence,
+                        "API endpoint " + api.method() + " " + api.path() + " handled by " + api.controllerName() + " lies in the blast radius of " + origin + ". Downstream execution may invoke modified components.",
+                        "HIGH",
+                        List.of("Execute REST functional tests against " + api.method() + " " + api.path(), "Verify request/response payload schemas and HTTP status codes"),
+                        List.of(api.controllerName() + "ApiTest", api.controllerName() + "IntegrationTest"),
+                        true
+                ));
+            }
+
+            // 8. Recommended targeted regression tests
             List<String> recommendedTests = recommendTargetedTests(repoDir, directlyChangedServices, allAffected);
 
-            // 8. Record AnalysisRun in database
+            // 9. Record AnalysisRun in database
             AnalysisRun run = new AnalysisRun();
             run.setRunType("REVISION_COMPARISON");
             run.setProjectId(projectId);
@@ -222,8 +363,10 @@ public class RevisionComparisonService {
                     recommendedTests,
                     "HIGH",
                     "Blast radius calculated via static AST and package dependency analysis. Runtime RPCs or reflection may induce uncaptured edges.",
-                    run.getId()
+                    run.getId(),
+                    explanations
             );
+
 
         } catch (Exception e) {
             log.error("Revision comparison failed for project {}: {}", projectId, e.getMessage(), e);

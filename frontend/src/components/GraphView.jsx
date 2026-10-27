@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -15,40 +15,120 @@ import {
   IconMinus,
   IconFitView,
   IconLockControls,
+  IconPlay,
+  IconPause,
+  IconChevronRight,
+  IconRefresh,
+  IconSearch,
 } from './Icons';
 
 const nodeTypes = {
   serviceNode: ServiceNode,
 };
 
+// Map known tiers to vertical layout layer indices
+const TIER_LAYER_ORDER = {
+  'client tier': 0,
+  'frontend tier': 0,
+  'web': 0,
+  'gateway': 1,
+  'application tier': 1,
+  'api gateway tier': 1,
+  'client / gateway tier': 1,
+  'domain tier': 2,
+  'core services': 2,
+  'integration tier': 3,
+  'messaging tier': 3,
+  'infrastructure tier': 4,
+  'data tier': 4,
+  'security tier': 5,
+  'compliance tier': 5,
+};
+
+function getTierLayer(tier) {
+  if (!tier) return 2;
+  const key = tier.toLowerCase().trim();
+  for (const [pattern, layer] of Object.entries(TIER_LAYER_ORDER)) {
+    if (key.includes(pattern)) return layer;
+  }
+  return 2;
+}
+
 function GraphInner({
-  services,
-  dependencies,
+  services = [],
+  dependencies = [],
   proposedServiceId = '',
   analyzedServiceId = '',
   selectedServiceId = '',
-  impactResult,
+  impactResult = null,
   onNodeClick,
+  datasetKey = '',
+  impactExplanations = [],
 }) {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
+  const { zoomIn, zoomOut, fitView, zoomTo } = useReactFlow();
   const [isLocked, setIsLocked] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [focusedNodeId, setFocusedNodeId] = useState(null);
+
+  // Animation playback state: 0 = ready/baseline, 1 = changed, 2 = direct, 3 = transitive, 4 = APIs, 5 = full evidence
+  const [animStep, setAnimStep] = useState(5);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isAnimatedMode, setIsAnimatedMode] = useState(false);
+  const playTimerRef = useRef(null);
+
   const effectiveAnalyzedId = analyzedServiceId || selectedServiceId;
 
+  // Active target for focus inspection
+  const activeFocusId = isFocusMode ? (focusedNodeId || effectiveAnalyzedId) : null;
+
+  // Identify direct neighbors for focus mode
+  const { focusNeighbors } = useMemo(() => {
+    const neighbors = new Set();
+    if (!activeFocusId) return { focusNeighbors: neighbors };
+
+    neighbors.add(activeFocusId);
+    for (const dep of dependencies) {
+      const src = dep.source || dep.sourceServiceName;
+      const tgt = dep.target || dep.targetServiceName;
+      if (src === activeFocusId) neighbors.add(tgt);
+      if (tgt === activeFocusId) neighbors.add(src);
+    }
+    return { focusNeighbors: neighbors };
+  }, [dependencies, activeFocusId]);
+
+  // Sets of affected services from impactResult
+  const directlyChanged = useMemo(
+    () => new Set(impactResult?.directlyChangedServices || (effectiveAnalyzedId ? [effectiveAnalyzedId] : [])),
+    [impactResult, effectiveAnalyzedId]
+  );
   const directAffected = useMemo(
-    () => new Set(impactResult?.directAffectedServices || []),
+    () => new Set(impactResult?.directAffectedServices || impactResult?.directlyImpactedServices || []),
     [impactResult]
   );
   const transitiveAffected = useMemo(
-    () => new Set(impactResult?.transitiveAffectedServices || []),
+    () => new Set(impactResult?.transitiveAffectedServices || impactResult?.transitivelyImpactedServices || []),
     [impactResult]
   );
+
+  // Correlate impacted APIs per service
+  const serviceApisMap = useMemo(() => {
+    const map = new Map();
+    const apis = impactResult?.impactedApis || [];
+    for (const api of apis) {
+      const comp = api.controllerName || api.component;
+      if (comp) {
+        map.set(comp, (map.get(comp) || 0) + 1);
+      }
+    }
+    return map;
+  }, [impactResult?.impactedApis]);
 
   // Set of edge keys that participate in an impact path
   const { directEdgeKeys, transitiveEdgeKeys } = useMemo(() => {
     const directKeys = new Set();
     const transitiveKeys = new Set();
 
-    if (!impactResult?.impactPaths || !effectiveAnalyzedId) {
+    if (!impactResult?.impactPaths) {
       return { directEdgeKeys: directKeys, transitiveEdgeKeys: transitiveKeys };
     }
 
@@ -56,8 +136,7 @@ function GraphInner({
       const p = item.path || [];
       for (let i = 0; i < p.length - 1; i++) {
         const key = `${p[i]}->${p[i + 1]}`;
-        // If the target in this hop is the changed service, this hop is direct
-        if (p[i + 1] === effectiveAnalyzedId) {
+        if (directlyChanged.has(p[i + 1])) {
           directKeys.add(key);
         } else {
           transitiveKeys.add(key);
@@ -65,31 +144,92 @@ function GraphInner({
       }
     }
     return { directEdgeKeys: directKeys, transitiveEdgeKeys: transitiveKeys };
-  }, [impactResult, effectiveAnalyzedId]);
+  }, [impactResult, directlyChanged]);
 
-  // Build React Flow nodes
+  // Calculate intelligent tiered layout positions
+  const computedPositions = useMemo(() => {
+    const positions = new Map();
+
+    // Check if services match predefined demo positions
+    const allHavePredefined = services.every(
+      (s) => Boolean(NODE_POSITIONS[s.id] || NODE_POSITIONS[s.label])
+    );
+
+    if (allHavePredefined) {
+      for (const s of services) {
+        positions.set(s.id, NODE_POSITIONS[s.id] || NODE_POSITIONS[s.label]);
+      }
+      return positions;
+    }
+
+    // Group services by architectural tier layer
+    const layerBuckets = new Map();
+    for (const s of services) {
+      const layer = getTierLayer(s.tier);
+      if (!layerBuckets.has(layer)) {
+        layerBuckets.set(layer, []);
+      }
+      layerBuckets.get(layer).push(s);
+    }
+
+    // Assign spaced, centered coordinates across layers
+    for (const [layer, svcsInLayer] of layerBuckets.entries()) {
+      const count = svcsInLayer.length;
+      const horizontalSpacing = Math.max(300, Math.min(360, 1100 / Math.max(1, count)));
+      const startX = 450 - ((count - 1) * horizontalSpacing) / 2;
+      const y = 50 + layer * 170;
+
+      svcsInLayer.forEach((s, idx) => {
+        // If demo node coordinate exists, use it; otherwise use the tiered coordinate
+        const fallbackPos = NODE_POSITIONS[s.id] || NODE_POSITIONS[s.label];
+        if (fallbackPos) {
+          positions.set(s.id, fallbackPos);
+        } else {
+          positions.set(s.id, {
+            x: Math.round(startX + idx * horizontalSpacing),
+            y: Math.round(y),
+          });
+        }
+      });
+    }
+
+    return positions;
+  }, [services]);
+
+  // Build React Flow nodes with animation steps and focus filtering
   const nodes = useMemo(() => {
-    return services.map((svc, index) => {
+    return services.map((svc) => {
       let status = 'unaffected';
-      const directlyChanged = new Set(impactResult?.directlyChangedServices || []);
-      if (svc.id === effectiveAnalyzedId || directlyChanged.has(svc.id) || directlyChanged.has(svc.label)) {
-        status = 'changed';
-      } else if (directAffected.has(svc.id) || directAffected.has(svc.label)) {
-        status = 'direct';
-      } else if (transitiveAffected.has(svc.id) || transitiveAffected.has(svc.label)) {
-        status = 'transitive';
-      } else if (svc.id === proposedServiceId) {
-        status = 'proposed';
+      const isChanged = directlyChanged.has(svc.id) || directlyChanged.has(svc.label);
+      const isDirect = directAffected.has(svc.id) || directAffected.has(svc.label);
+      const isTransitive = transitiveAffected.has(svc.id) || transitiveAffected.has(svc.label);
+
+      // In animated mode, reveal statuses progressively according to animStep
+      if (isAnimatedMode) {
+        if (animStep >= 1 && isChanged) {
+          status = 'changed';
+        } else if (animStep >= 2 && isDirect) {
+          status = 'direct';
+        } else if (animStep >= 3 && isTransitive) {
+          status = 'transitive';
+        } else if (svc.id === proposedServiceId) {
+          status = 'proposed';
+        }
+      } else {
+        if (isChanged) {
+          status = 'changed';
+        } else if (isDirect) {
+          status = 'direct';
+        } else if (isTransitive) {
+          status = 'transitive';
+        } else if (svc.id === proposedServiceId) {
+          status = 'proposed';
+        }
       }
 
-      // Check predefined positions first (matches standard demo names)
-      let position = NODE_POSITIONS[svc.id] || NODE_POSITIONS[svc.label];
-      if (!position) {
-        // Deterministic grid layout for persisted services without predefined coordinates
-        const col = index % 3;
-        const row = Math.floor(index / 3);
-        position = { x: 80 + col * 240, y: 80 + row * 160 };
-      }
+      const position = computedPositions.get(svc.id) || { x: 100, y: 100 };
+      const isDimmed = Boolean(isFocusMode && activeFocusId && !focusNeighbors.has(svc.id));
+      const endpointsCount = (isAnimatedMode && animStep < 4) ? 0 : (serviceApisMap.get(svc.id) || serviceApisMap.get(svc.label) || 0);
 
       return {
         id: svc.id,
@@ -102,77 +242,127 @@ function GraphInner({
           tier: svc.tier || 'Domain Tier',
           icon: svc.icon || 'database',
           status,
+          isDimmed,
+          endpointsCount,
+        },
+        style: {
+          opacity: isDimmed ? 0.22 : 1,
+          transition: 'opacity 0.25s ease, transform 0.25s ease',
         },
       };
     });
-  }, [services, effectiveAnalyzedId, proposedServiceId, directAffected, transitiveAffected, impactResult?.directlyChangedServices]);
+  }, [
+    services,
+    directlyChanged,
+    directAffected,
+    transitiveAffected,
+    proposedServiceId,
+    computedPositions,
+    isAnimatedMode,
+    animStep,
+    isFocusMode,
+    activeFocusId,
+    focusNeighbors,
+    serviceApisMap,
+  ]);
 
-  // Build React Flow edges
-  // Convention: source -> target means source depends on target
+  // Build React Flow edges with animated highlighting
   const edges = useMemo(() => {
     const visibleIds = new Set(services.map((service) => service.id));
-    return dependencies.filter((dep) => visibleIds.has(dep.source || dep.sourceServiceName) && visibleIds.has(dep.target || dep.targetServiceName)).map((dep, index) => {
-      const source = dep.source || dep.sourceServiceName;
-      const target = dep.target || dep.targetServiceName;
-      const edgeKey = `${source}->${target}`;
-      const isDirectEdge = directEdgeKeys.has(edgeKey);
-      const isTransitiveEdge = transitiveEdgeKeys.has(edgeKey);
-      const isImpactEdge = isDirectEdge || isTransitiveEdge;
+    return dependencies
+      .filter((dep) => visibleIds.has(dep.source || dep.sourceServiceName) && visibleIds.has(dep.target || dep.targetServiceName))
+      .map((dep, index) => {
+        const source = dep.source || dep.sourceServiceName;
+        const target = dep.target || dep.targetServiceName;
+        const edgeKey = `${source}->${target}`;
 
-      let edgeColor = '#94a3b8'; // Slate-400
-      let strokeWidth = 1.5;
-      let animated = false;
+        const isDirectEdge = directEdgeKeys.has(edgeKey);
+        const isTransitiveEdge = transitiveEdgeKeys.has(edgeKey);
 
-      if (isDirectEdge) {
-        edgeColor = '#ef4444'; // Red-500
-        strokeWidth = 2.2;
-        animated = false;
-      } else if (isTransitiveEdge) {
-        edgeColor = '#8b5cf6'; // Purple-500
-        strokeWidth = 2.2;
-        animated = false;
-      } else if (effectiveAnalyzedId) {
-        edgeColor = '#cbd5e1'; // Slate-300
-        strokeWidth = 1.4;
-      }
+        let isHighlighted = false;
+        if (isAnimatedMode) {
+          if (animStep >= 2 && isDirectEdge) isHighlighted = true;
+          if (animStep >= 3 && isTransitiveEdge) isHighlighted = true;
+        } else {
+          isHighlighted = isDirectEdge || isTransitiveEdge;
+        }
 
-      // Handle custom attachment points for cleaner routing
-      let sourceHandle = 'bottom';
-      let targetHandle = 'top';
+        let edgeColor = '#94a3b8'; // Slate-400
+        let strokeWidth = 1.5;
+        let animated = false;
 
-      if (source === 'Order Service' && target === 'Payment Service') {
-        sourceHandle = 'right';
-        targetHandle = 'left';
-      } else if (source === 'Notification Service' && target === 'Payment Service') {
-        // Circular back-edge from bottom row to upper row
-        sourceHandle = 'right';
-        targetHandle = 'bottom';
-      }
+        if (isHighlighted) {
+          if (isDirectEdge) {
+            edgeColor = '#ef4444'; // Red-500 direct impact
+            strokeWidth = 2.6;
+            animated = isAnimatedMode;
+          } else if (isTransitiveEdge) {
+            edgeColor = '#8b5cf6'; // Purple-500 transitive impact
+            strokeWidth = 2.4;
+            animated = isAnimatedMode;
+          }
+        } else if (effectiveAnalyzedId && (directlyChanged.size > 0 || directAffected.size > 0)) {
+          edgeColor = '#cbd5e1'; // Slate-300 dimmed
+          strokeWidth = 1.3;
+        }
 
-      return {
-        id: `e-${source}-${target}-${index}`,
-        source,
-        target,
-        sourceHandle,
-        targetHandle,
-        animated,
-        style: {
-          stroke: edgeColor,
-          strokeWidth,
-          opacity: effectiveAnalyzedId && !isImpactEdge ? 0.65 : 1,
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          width: 15,
-          height: 15,
-          color: edgeColor,
-        },
-      };
-    });
-  }, [dependencies, services, directEdgeKeys, transitiveEdgeKeys, effectiveAnalyzedId]);
+        // Focus mode edge dimming
+        const isEdgeConnectedToFocus = isFocusMode && activeFocusId
+          ? (source === activeFocusId || target === activeFocusId)
+          : true;
+        const edgeOpacity = (!isEdgeConnectedToFocus) ? 0.15 : (isHighlighted ? 1 : 0.65);
 
+        // Custom routing handles
+        let sourceHandle = 'bottom';
+        let targetHandle = 'top';
+
+        if (source === 'Order Service' && target === 'Payment Service') {
+          sourceHandle = 'right';
+          targetHandle = 'left';
+        } else if (source === 'Notification Service' && target === 'Payment Service') {
+          sourceHandle = 'right';
+          targetHandle = 'bottom-target';
+        }
+
+        return {
+          id: `e-${source}-${target}-${index}`,
+          source,
+          target,
+          sourceHandle,
+          targetHandle,
+          animated,
+          style: {
+            stroke: edgeColor,
+            strokeWidth,
+            opacity: edgeOpacity,
+            transition: 'stroke 0.3s, stroke-width 0.3s, opacity 0.25s',
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 16,
+            height: 16,
+            color: edgeColor,
+          },
+        };
+      });
+  }, [
+    dependencies,
+    services,
+    directEdgeKeys,
+    transitiveEdgeKeys,
+    isAnimatedMode,
+    animStep,
+    effectiveAnalyzedId,
+    directlyChanged,
+    directAffected,
+    isFocusMode,
+    activeFocusId,
+  ]);
+
+  // Node Click: notify parent and set focus candidate
   const handleNodeClick = useCallback(
     (_, node) => {
+      setFocusedNodeId(node.id);
       if (onNodeClick) {
         onNodeClick(node.id);
       }
@@ -180,64 +370,209 @@ function GraphInner({
     [onNodeClick]
   );
 
-  const handleFitView = useCallback(() => {
-    fitView({ padding: 0.15, duration: 400 });
-  }, [fitView]);
+  // Viewport Navigation Controls
+  const handleZoomIn = useCallback(() => zoomIn({ duration: 250 }), [zoomIn]);
+  const handleZoomOut = useCallback(() => zoomOut({ duration: 250 }), [zoomOut]);
+  const handleFitView = useCallback(() => fitView({ padding: 0.18, duration: 400 }), [fitView]);
+  const handleResetScale = useCallback(() => zoomTo(1.0, { duration: 300 }), [zoomTo]);
+
+  // Fit view once on project/dataset change only
+  const lastDatasetRef = useRef(datasetKey);
+  useEffect(() => {
+    if (datasetKey !== lastDatasetRef.current) {
+      lastDatasetRef.current = datasetKey;
+      const timer = setTimeout(() => {
+        fitView({ padding: 0.18, duration: 400 });
+      }, 80);
+      return () => clearTimeout(timer);
+    }
+  }, [datasetKey, fitView]);
+
+  // Focus Mode toggle
+  const handleToggleFocus = useCallback(() => {
+    setIsFocusMode((prev) => !prev);
+  }, []);
+
+  // Animated Playback Control
+  const handleStartAnimation = useCallback(() => {
+    setIsAnimatedMode(true);
+    setAnimStep(1);
+    setIsPlaying(true);
+  }, []);
+
+  const handlePauseAnimation = useCallback(() => {
+    setIsPlaying(false);
+  }, []);
+
+  const handleResumeAnimation = useCallback(() => {
+    setIsAnimatedMode(true);
+    setIsPlaying(true);
+  }, []);
+
+  const handleStepForward = useCallback(() => {
+    setIsAnimatedMode(true);
+    setIsPlaying(false);
+    setAnimStep((prev) => Math.min(5, prev + 1));
+  }, []);
+
+  const handleResetAnimation = useCallback(() => {
+    setIsPlaying(false);
+    setIsAnimatedMode(false);
+    setAnimStep(0);
+  }, []);
+
+  // Step advancement timer
+  useEffect(() => {
+    if (isPlaying && isAnimatedMode) {
+      playTimerRef.current = setInterval(() => {
+        setAnimStep((prev) => {
+          if (prev >= 5) {
+            setIsPlaying(false);
+            return 5;
+          }
+          return prev + 1;
+        });
+      }, 1300);
+    } else {
+      clearInterval(playTimerRef.current);
+    }
+    return () => clearInterval(playTimerRef.current);
+  }, [isPlaying, isAnimatedMode]);
+
+  const stepDescriptions = [
+    'Baseline Architecture: No active changes simulated',
+    'Step 1 of 5: Highlight Root Changed Components',
+    'Step 2 of 5: Reveal Direct Callers & Dependencies',
+    'Step 3 of 5: Propagate Transitive Blast Radius',
+    'Step 4 of 5: Correlate Impacted API Endpoints',
+    'Step 5 of 5: Complete Impact Trace & Evidence Verified',
+  ];
 
   return (
     <div className="graph-view-card">
-      {/* Graph Header */}
+      {/* Graph Header with Navigation and Mode Controls */}
       <div className="graph-view-header">
         <div className="graph-title-group">
           <div className="graph-title-icon">
             <IconImpact size={18} className="text-primary" />
           </div>
           <div>
-            <h3 className="section-title">Dependency Graph</h3>
+            <h3 className="section-title">Architecture Dependency Graph</h3>
             <p className="convention-caption">
-              A &rarr; B means service A depends on service B. Click any node to select it as the proposed change target.
+              Directed edges (A &rarr; B) denote that component A depends on B. Select any node to inspect evidence or simulate blast radius.
             </p>
           </div>
         </div>
 
-        {/* Compact Legend */}
-        <div className="graph-legend">
-          <span className="legend-item">
-            <span className="legend-dot dot-changed" />
-            <span className="legend-text">Target (Simulated Change)</span>
-          </span>
-          <span className="legend-item">
-            <span className="legend-dot dot-direct" />
-            <span className="legend-text">Direct Impact</span>
-          </span>
-          <span className="legend-item">
-            <span className="legend-dot dot-transitive" />
-            <span className="legend-text">Indirect Impact</span>
-          </span>
-          <span className="legend-item">
-            <span className="legend-dot dot-unaffected" />
-            <span className="legend-text">Unaffected</span>
-          </span>
+        {/* Animation Playback Toolbar */}
+        <div className="animated-impact-controls" role="toolbar" aria-label="Change impact animation controls">
+          {!isPlaying ? (
+            <button
+              type="button"
+              className="anim-ctrl-btn primary"
+              onClick={isAnimatedMode && animStep > 0 && animStep < 5 ? handleResumeAnimation : handleStartAnimation}
+              title="Play progressive change impact animation"
+            >
+              <IconPlay size={14} />
+              <span>{isAnimatedMode && animStep > 0 && animStep < 5 ? 'Resume' : 'Play Impact'}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="anim-ctrl-btn warning"
+              onClick={handlePauseAnimation}
+              title="Pause animation"
+            >
+              <IconPause size={14} />
+              <span>Pause</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="anim-ctrl-btn"
+            onClick={handleStepForward}
+            disabled={animStep >= 5 && isAnimatedMode}
+            title="Step forward to next impact phase"
+          >
+            <IconChevronRight size={14} />
+            <span>Step</span>
+          </button>
+
+          <button
+            type="button"
+            className="anim-ctrl-btn"
+            onClick={handleResetAnimation}
+            title="Reset to full static architecture view"
+          >
+            <IconRefresh size={14} />
+            <span>Reset</span>
+          </button>
         </div>
       </div>
 
+      {/* Animation Progress Banner */}
+      {isAnimatedMode && (
+        <div className="animation-progress-bar-wrap">
+          <div className="anim-progress-track">
+            <div
+              className="anim-progress-fill"
+              style={{ width: `${(animStep / 5) * 100}%` }}
+            />
+          </div>
+          <div className="anim-step-label-row">
+            <span className="anim-step-desc">
+              <strong>Phase {animStep}:</strong> {stepDescriptions[animStep]}
+              {animStep === 5 && impactExplanations?.length > 0 && (
+                <span className="anim-evidence-badge">
+                  {' '}&bull; {impactExplanations.length} source evidence path{impactExplanations.length > 1 ? 's' : ''} available (click any node to inspect)
+                </span>
+              )}
+            </span>
+            <span className="anim-step-pct">{animStep} / 5</span>
+          </div>
+        </div>
+      )}
+
+      {/* Focus Mode Status Pill */}
+      {isFocusMode && activeFocusId && (
+        <div className="focus-mode-indicator-bar">
+          <div className="focus-bar-left">
+            <IconSearch size={15} />
+            <span>
+              <strong>Focus Mode Active:</strong> Isolating <code>{activeFocusId}</code> and {focusNeighbors.size - 1} connected component(s).
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn-exit-focus"
+            onClick={() => setIsFocusMode(false)}
+          >
+            Exit Focus Mode
+          </button>
+        </div>
+      )}
+
       {/* React Flow Canvas */}
-      <div className="react-flow-wrapper" style={{ width: '100%', height: '580px', minHeight: '500px', position: 'relative' }}>
+      <div
+        className="react-flow-wrapper"
+        style={{ width: '100%', height: '620px', minHeight: '520px', position: 'relative' }}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
           onNodeClick={handleNodeClick}
           fitView
-          fitViewOptions={{ padding: 0.15 }}
-          minZoom={0.4}
-          maxZoom={1.8}
+          fitViewOptions={{ padding: 0.18 }}
+          minZoom={0.3}
+          maxZoom={2.2}
           panOnDrag={!isLocked}
           zoomOnScroll={!isLocked}
-          preventScrolling={false}
+          preventScrolling={true}
           proOptions={{ hideAttribution: true }}
         >
-          <Background color="#cbd5e1" gap={18} size={1.2} />
+          <Background color="#cbd5e1" gap={20} size={1.2} />
         </ReactFlow>
 
         {/* Floating Zoom & Pan Controls on Bottom Left */}
@@ -245,20 +580,20 @@ function GraphInner({
           <button
             type="button"
             className="graph-ctrl-btn"
-            onClick={() => zoomIn({ duration: 300 })}
-            title="Zoom In"
+            onClick={handleZoomIn}
+            title="Zoom In (+)"
             aria-label="Zoom In"
           >
-            <IconPlus size={15} />
+            <IconPlus size={16} />
           </button>
           <button
             type="button"
             className="graph-ctrl-btn"
-            onClick={() => zoomOut({ duration: 300 })}
-            title="Zoom Out"
+            onClick={handleZoomOut}
+            title="Zoom Out (-)"
             aria-label="Zoom Out"
           >
-            <IconMinus size={15} />
+            <IconMinus size={16} />
           </button>
           <button
             type="button"
@@ -267,7 +602,25 @@ function GraphInner({
             title="Fit to Center"
             aria-label="Fit to Center"
           >
-            <IconFitView size={15} />
+            <IconFitView size={16} />
+          </button>
+          <button
+            type="button"
+            className="graph-ctrl-btn"
+            onClick={handleResetScale}
+            title="Reset Scale to 100%"
+            aria-label="Reset Scale 100%"
+          >
+            <span style={{ fontSize: '11px', fontWeight: 'bold' }}>1:1</span>
+          </button>
+          <button
+            type="button"
+            className={`graph-ctrl-btn ${isFocusMode ? 'active' : ''}`}
+            onClick={handleToggleFocus}
+            title={isFocusMode ? 'Exit Component Focus Mode' : 'Focus Mode on Selected Component'}
+            aria-label="Toggle Focus Mode"
+          >
+            <IconSearch size={15} />
           </button>
           <button
             type="button"
@@ -280,9 +633,24 @@ function GraphInner({
           </button>
         </div>
 
-        {/* Floating Helper Notice at Bottom Right */}
-        <div className="graph-helper-notice">
-          <span>Click any node to select it as the proposed change target</span>
+        {/* Graph Legend on Bottom Right */}
+        <div className="graph-floating-legend" aria-label="Graph legend">
+          <span className="legend-item">
+            <span className="legend-dot dot-changed" />
+            <span className="legend-text">Changed Root</span>
+          </span>
+          <span className="legend-item">
+            <span className="legend-dot dot-direct" />
+            <span className="legend-text">Direct Dependent</span>
+          </span>
+          <span className="legend-item">
+            <span className="legend-dot dot-transitive" />
+            <span className="legend-text">Transitive Caller</span>
+          </span>
+          <span className="legend-item">
+            <span className="legend-dot dot-unaffected" />
+            <span className="legend-text">Unaffected</span>
+          </span>
         </div>
       </div>
     </div>

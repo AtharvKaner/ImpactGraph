@@ -372,9 +372,16 @@ export function isNetworkFailure(err) {
  */
 export function adaptGraphResponse(data, { isLive = true, isFallback = false, fallbackReason = null } = {}) {
   const cycles = data.cycles || data.cycleDetails || [];
+  const isEcommercePreset = data.preset === DATASET_PRESETS.ECOMMERCE_DAG ||
+    data.name === 'E-Commerce Architecture' ||
+    data.name === 'E-Commerce Platform (DAG)';
+  const name = isEcommercePreset
+    ? '[Demo] E-Commerce Multi-Service Platform (DAG)'
+    : (data.name || 'Demonstration Topology');
+
   return {
     preset: data.preset || DATASET_PRESETS.ECOMMERCE_DAG,
-    name: data.name || 'Demonstration Topology',
+    name,
     description: data.description || '',
     serviceCount: data.serviceCount ?? (data.services || []).length,
     edgeCount: data.edgeCount ?? (data.dependencies || []).length,
@@ -514,6 +521,97 @@ export async function fetchProjects(options = {}) {
 }
 
 /**
+ * Deterministic metadata catalog for the built-in 8-service e-commerce demo topology.
+ * Ensures demo services retain rich architectural tiers, icons, and roles whether loaded
+ * from PostgreSQL or in-memory demonstration presets.
+ */
+export const DEMO_SERVICE_METADATA = {
+  'Storefront Web': { tier: 'Client Tier', type: 'Frontend / Gateway', icon: 'globe' },
+  'Checkout Service': { tier: 'Application Tier', type: 'Orchestrator', icon: 'cart' },
+  'Auth Service': { tier: 'Infrastructure Tier', type: 'Security / Identity', icon: 'lock' },
+  'Order Service': { tier: 'Domain Tier', type: 'Core Domain', icon: 'database' },
+  'Payment Service': { tier: 'Domain Tier', type: 'Core Domain', icon: 'card' },
+  'Inventory Service': { tier: 'Domain Tier', type: 'Core Domain', icon: 'cube' },
+  'Notification Service': { tier: 'Integration Tier', type: 'Messaging / Events', icon: 'bell' },
+  'Audit Logger': { tier: 'Security Tier', type: 'Compliance / CNS', icon: 'document' },
+};
+
+/**
+ * Resolves architectural tier, component type, and visual icon from service properties,
+ * standard demo catalog, or description annotations (e.g. from static AST parser).
+ *
+ * @param {object} rawService
+ * @returns {{ tier: string, type: string, icon: string }}
+ */
+export function resolveServiceMetadata(rawService) {
+  if (!rawService) {
+    return { tier: 'Domain Tier', type: 'Core Domain', icon: 'database' };
+  }
+
+  const name = rawService.name || rawService.label || '';
+  const desc = rawService.description || '';
+
+  // 1. Direct match with standard demo catalog
+  if (DEMO_SERVICE_METADATA[name]) {
+    return { ...DEMO_SERVICE_METADATA[name] };
+  }
+
+  // 2. Parse tier from description if present (e.g. "... (Client Tier)" or "Tier: DOMAIN")
+  let tier = rawService.tier;
+  let type = rawService.type;
+  let icon = rawService.icon;
+
+  if (!tier && desc) {
+    const parenthesizedTierMatch = desc.match(/\(([^)]+Tier)\)/i);
+    if (parenthesizedTierMatch) {
+      tier = parenthesizedTierMatch[1].trim();
+    } else {
+      const explicitTierMatch = desc.match(/Tier:\s*([^|\n]+)/i);
+      if (explicitTierMatch) {
+        const rawTier = explicitTierMatch[1].trim().toUpperCase();
+        if (rawTier === 'CLIENT' || rawTier === 'CONTROLLER' || rawTier === 'WEB') tier = 'Client Tier';
+        else if (rawTier === 'APPLICATION' || rawTier === 'APP') tier = 'Application Tier';
+        else if (rawTier === 'DOMAIN' || rawTier === 'SERVICE') tier = 'Domain Tier';
+        else if (rawTier === 'INFRASTRUCTURE' || rawTier === 'INFRA') tier = 'Infrastructure Tier';
+        else if (rawTier === 'INTEGRATION') tier = 'Integration Tier';
+        else if (rawTier === 'SECURITY') tier = 'Security Tier';
+        else tier = `${explicitTierMatch[1].trim()} Tier`;
+      }
+    }
+  }
+
+  if (!type && desc) {
+    const explicitTypeMatch = desc.match(/Type:\s*([^|\n]+)/i);
+    if (explicitTypeMatch) {
+      const rawType = explicitTypeMatch[1].trim();
+      if (rawType === 'SPRING_CONTROLLER') type = 'Spring Controller';
+      else if (rawType === 'SPRING_SERVICE') type = 'Spring Service';
+      else if (rawType === 'SPRING_REPOSITORY') type = 'Spring Repository';
+      else if (rawType === 'SPRING_COMPONENT') type = 'Spring Component';
+      else type = rawType;
+    }
+  }
+
+  tier = tier || 'Domain Tier';
+  type = type || 'Core Domain';
+
+  if (!icon) {
+    const tLower = tier.toLowerCase();
+    const typeLower = type.toLowerCase();
+    if (tLower.includes('client') || typeLower.includes('frontend') || typeLower.includes('gateway') || typeLower.includes('controller')) icon = 'globe';
+    else if (tLower.includes('application') || typeLower.includes('orchestrator')) icon = 'cart';
+    else if (tLower.includes('infra') || tLower.includes('security') || typeLower.includes('auth') || typeLower.includes('security')) icon = 'lock';
+    else if (tLower.includes('integration') || typeLower.includes('message') || typeLower.includes('notification')) icon = 'bell';
+    else if (typeLower.includes('payment') || name.toLowerCase().includes('payment')) icon = 'card';
+    else if (typeLower.includes('inventory') || name.toLowerCase().includes('inventory')) icon = 'cube';
+    else if (name.toLowerCase().includes('audit') || tLower.includes('compliance')) icon = 'document';
+    else icon = 'database';
+  }
+
+  return { tier, type, icon };
+}
+
+/**
  * Normalizes persisted project services and dependencies into the graph structure consumed by the UI.
  *
  * @param {object} project
@@ -522,16 +620,26 @@ export async function fetchProjects(options = {}) {
  * @returns {object} adapted graph data
  */
 export function adaptPersistedGraph(project, rawServices = [], rawDependencies = []) {
-  const services = (rawServices || []).map((s) => ({
-    id: s.name || String(s.id),
-    numericId: s.id,
-    label: s.name || `Service #${s.id}`,
-    type: s.type || 'Core Domain',
-    tier: s.tier || 'Domain Tier',
-    icon: s.icon || 'database',
-    description: s.description || '',
-    apiCount: s.apiCount || 0,
-  }));
+  const isDemo = Boolean(
+    project?.name && (project.name.includes('[Demo]') || project.name.includes('E-Commerce Platform'))
+  );
+  const normalizedName = isDemo
+    ? '[Demo] E-Commerce Multi-Service Platform'
+    : (project?.name || `Project #${project?.id}`);
+
+  const services = (rawServices || []).map((s) => {
+    const meta = resolveServiceMetadata(s);
+    return {
+      id: s.name || String(s.id),
+      numericId: s.id,
+      label: s.name || `Service #${s.id}`,
+      type: s.type || meta.type,
+      tier: s.tier || meta.tier,
+      icon: s.icon || meta.icon,
+      description: s.description || '',
+      apiCount: s.apiCount || 0,
+    };
+  });
 
   const dependencies = (rawDependencies || []).map((d) => {
     const source = d.sourceServiceName || d.source;
@@ -549,7 +657,7 @@ export function adaptPersistedGraph(project, rawServices = [], rawDependencies =
   return {
     projectId: project?.id,
     preset: null,
-    name: project?.name || `Project #${project?.id}`,
+    name: normalizedName,
     description: project?.description || '',
     serviceCount: services.length,
     edgeCount: dependencies.length,
@@ -986,12 +1094,19 @@ export async function fetchGitHubStatus(options = {}) {
  */
 export async function fetchDemoProject(options = {}) {
   try {
-    return await apiGet('/api/projects/demo', options);
+    const data = await apiGet('/api/projects/demo', options);
+    if (data && data.id) {
+      return {
+        ...data,
+        name: data.name || '[Demo] E-Commerce Multi-Service Platform',
+      };
+    }
+    return data;
   } catch (err) {
     if (!isNetworkFailure(err)) throw err;
     return {
       id: 1,
-      name: '[Demo] E-Commerce Platform',
+      name: '[Demo] E-Commerce Multi-Service Platform',
       description: 'Deterministic 8-service multi-tier e-commerce platform demo architecture with security findings.',
     };
   }

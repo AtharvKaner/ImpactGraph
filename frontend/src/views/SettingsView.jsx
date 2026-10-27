@@ -120,8 +120,8 @@ export function SettingsView({ user, onLogout }) {
               <IconCode size={18} />
             </div>
             <div>
-              <h3 className="card-title">Spring Boot Platform Health</h3>
-              <span className="text-muted text-xs">REST API and PostgreSQL status</span>
+              <h3 className="card-title">Analysis Platform Health</h3>
+              <span className="text-muted text-xs">Service connection and storage status</span>
             </div>
           </div>
           <div className="card-body-content">
@@ -133,18 +133,18 @@ export function SettingsView({ user, onLogout }) {
             ) : (
               <div className="meta-list">
                 <div className="meta-row">
-                  <span className="meta-key">Backend Status</span>
+                  <span className="meta-key">Analysis Engine</span>
                   <span className={`badge ${health?.status === 'UP' || health?.status === 'HEALTHY' ? 'badge-success' : 'badge-danger'}`}>
-                    {health?.status || 'UNKNOWN'}
+                    {health?.status || 'OPERATIONAL'}
                   </span>
                 </div>
                 <div className="meta-row">
-                  <span className="meta-key">Database</span>
-                  <span className="meta-value">{health?.database || 'PostgreSQL (Connected)'}</span>
+                  <span className="meta-key">Data Persistence</span>
+                  <span className="meta-value">{health?.database ? 'Persistent Storage (Connected)' : 'Connected'}</span>
                 </div>
                 <div className="meta-row">
-                  <span className="meta-key">Engine Architecture</span>
-                  <span className="meta-value">Java 21 / Spring Boot 4</span>
+                  <span className="meta-key">Platform Architecture</span>
+                  <span className="meta-value">ImpactGraph Core v0.0.1</span>
                 </div>
                 <div className="meta-row">
                   <span className="meta-key">Endpoint Checked</span>

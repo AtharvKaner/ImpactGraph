@@ -161,14 +161,70 @@ public class GitOperationsService {
     }
 
     /**
-     * Computes the file changes between two revisions using git diff --name-status.
+     * Computes the file changes between two revisions using git diff --name-status, --numstat, and line ranges.
      */
     public List<ChangedFileDto> getDiffBetweenRevisions(Path repoDir, String baseRevision, String targetRevision) {
         List<ChangedFileDto> changedFiles = new ArrayList<>();
         String base = (baseRevision != null && !baseRevision.isBlank()) ? baseRevision.trim() : "HEAD~1";
         String target = (targetRevision != null && !targetRevision.isBlank()) ? targetRevision.trim() : "HEAD";
 
+        Map<String, int[]> numstatMap = new HashMap<>();
+        Map<String, List<String>> lineRangesMap = new HashMap<>();
+        Map<String, String> snippetMap = new HashMap<>();
+
         try {
+            // 1. Capture lines added and deleted
+            try {
+                String numstatOut = runGitCommand(repoDir, 20, "diff", "--numstat", base, target);
+                for (String line : numstatOut.split("\n")) {
+                    if (line.isBlank()) continue;
+                    String[] parts = line.split("\t");
+                    if (parts.length >= 3) {
+                        try {
+                            int added = parts[0].equals("-") ? 0 : Integer.parseInt(parts[0].trim());
+                            int deleted = parts[1].equals("-") ? 0 : Integer.parseInt(parts[1].trim());
+                            String path = parts[2].trim();
+                            numstatMap.put(path, new int[]{added, deleted});
+                        } catch (Exception ignored) {}
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("git diff --numstat ignored: {}", e.getMessage());
+            }
+
+            // 2. Capture changed line ranges and snippets
+            try {
+                String hunkOut = runGitCommand(repoDir, 20, "diff", "-U0", base, target);
+                String currentFile = null;
+                for (String line : hunkOut.split("\n")) {
+                    if (line.startsWith("+++ b/")) {
+                        currentFile = line.substring(6).trim();
+                    } else if (currentFile != null && line.startsWith("@@")) {
+                        int at2 = line.indexOf("@@", 2);
+                        if (at2 > 0) {
+                            String header = line.substring(2, at2).trim();
+                            for (String part : header.split(" ")) {
+                                if (part.startsWith("+")) {
+                                    try {
+                                        String targetPart = part.substring(1);
+                                        String[] segs = targetPart.split(",");
+                                        int startLine = Integer.parseInt(segs[0]);
+                                        int count = segs.length > 1 ? Integer.parseInt(segs[1]) : 1;
+                                        String rangeStr = count <= 1 ? "L" + startLine : "L" + startLine + "-L" + (startLine + count - 1);
+                                        lineRangesMap.computeIfAbsent(currentFile, k -> new ArrayList<>()).add(rangeStr);
+                                    } catch (Exception ignored) {}
+                                }
+                            }
+                        }
+                    } else if (currentFile != null && (line.startsWith("+") || line.startsWith("-")) && !line.startsWith("+++") && !line.startsWith("---")) {
+                        snippetMap.putIfAbsent(currentFile, line.trim());
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("git diff -U0 ignored: {}", e.getMessage());
+            }
+
+            // 3. Capture file status list
             String output = runGitCommand(repoDir, 20, "diff", "--name-status", base, target);
             for (String line : output.split("\n")) {
                 if (line.isBlank()) continue;
@@ -191,7 +247,11 @@ public class GitOperationsService {
                     filePath = parts.length > 2 ? parts[2].trim() : filePath;
                 }
 
-                changedFiles.add(new ChangedFileDto(filePath, changeType, oldPath, null));
+                int[] stats = numstatMap.getOrDefault(filePath, new int[]{0, 0});
+                List<String> ranges = lineRangesMap.getOrDefault(filePath, List.of());
+                String snippet = snippetMap.get(filePath);
+
+                changedFiles.add(new ChangedFileDto(filePath, changeType, oldPath, null, stats[0], stats[1], ranges, snippet));
             }
         } catch (Exception e) {
             log.warn("Git diff failed between {} and {}: {}", base, target, e.getMessage());
@@ -199,6 +259,7 @@ public class GitOperationsService {
 
         return changedFiles;
     }
+
 
     /**
      * Executes an arbitrary git command inside the given repository directory with a timeout.

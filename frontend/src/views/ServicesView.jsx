@@ -73,7 +73,7 @@ export function ServicesView({
           <h2 className="view-title">Microservices & API Directory</h2>
           <p className="view-subtitle">
             Comprehensive catalog of registered components, dependency connectivity, and topology tier distribution for{' '}
-            <strong>{selectedProjectId ? `PostgreSQL Project #${selectedProjectId}` : (graphData?.name || currentPreset)}</strong>
+            <strong>{selectedProjectId ? (graphData?.name || `Repository Project #${selectedProjectId}`) : (graphData?.name || currentPreset)}</strong>
           </p>
         </div>
       </div>

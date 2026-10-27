@@ -147,12 +147,12 @@ export function TopNav({
           />
           <span className="backend-status-label">
             {backendLoading
-              ? 'Checking Backend...'
+              ? 'Checking Engine...'
               : healthData
-              ? 'Backend Online (8080)'
+              ? 'Analysis Engine Online'
               : isDemoFallback
-              ? 'Backend Offline (Demo Fallback)'
-              : 'Backend Offline'}
+              ? 'Engine Offline (Demo Mode)'
+              : 'Engine Offline'}
           </span>
         </button>
 

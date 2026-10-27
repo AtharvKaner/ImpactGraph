@@ -56,29 +56,24 @@ export function ImpactPanel({
     });
   }, [findings, analyzedServiceId, impactResult]);
 
-  // Compute targeted regression test recommendations
+  // Compute targeted regression test recommendations derived from actual analyzed services
   const recommendedTests = useMemo(() => {
     if (!analyzedServiceId) return [];
-    const tests = [];
-    if (analyzedServiceId === 'Payment Service') {
-      tests.push(
-        { name: 'SecurityIntegrationTest#deleteProject_developer_accessDenied', reason: 'Targeted RBAC regression suite for administrative refund & payment mutating routes' },
-        { name: 'SecurityAnalysisIntegrationTest#verifyFinding_secAuthz002_remediated_succeedsVerification', reason: 'Deterministic verification re-evaluator for Payment Service authorization checks' },
-        { name: 'SecurityIntegrationTest#accessOtherProject_forbidden', reason: 'Tenant isolation verification for upstream Order & Checkout Service callers' },
-      );
-    } else if (analyzedServiceId === 'Order Service') {
-      tests.push(
-        { name: 'SecurityIntegrationTest#accessOtherProject_forbidden', reason: 'Verifies IDOR parameter scoping on GET /api/projects/{projectId}/services' },
-        { name: 'SecurityAnalysisIntegrationTest#verifyFinding_secTaint003_vulnerabilityRemainsPresent_failsVerification', reason: 'Taint-tracking regression suite on order processing routes' },
-      );
-    } else {
-      tests.push(
-        { name: 'SecurityIntegrationTest#unauthenticated_request_unauthorized', reason: 'Guards filter chain authentication boundaries on direct and transitive callers' },
-        { name: 'DemoProjectTest#testDemoProjectAccess', reason: 'Validates multi-tenant project boundary integrity' },
-      );
+    if (impactResult?.recommendedRegressionTests?.length > 0) {
+      return impactResult.recommendedRegressionTests.map((t) => ({
+        name: t,
+        reason: 'Targeted regression test candidate for components in the change blast radius',
+      }));
+    }
+    const tests = [
+      { name: `${analyzedServiceId}Test`, reason: `Direct unit test suite for ${analyzedServiceId}` },
+      { name: `${analyzedServiceId}IntegrationTest`, reason: `Integration verification suite for callers and dependencies of ${analyzedServiceId}` },
+    ];
+    for (const caller of (impactResult?.directAffectedServices || []).slice(0, 2)) {
+      tests.push({ name: `${caller}IntegrationTest`, reason: `Downstream contract test for direct dependent ${caller}` });
     }
     return tests;
-  }, [analyzedServiceId]);
+  }, [analyzedServiceId, impactResult]);
 
   // 1. Loading State
   if (loading) {
@@ -86,63 +81,51 @@ export function ImpactPanel({
       <div className="impact-panel-card loading-state">
         <div className="spinner" />
         <p className="loading-text">
-          Computing simulated change blast radius across dependency graph...
+          Computing change blast radius across dependency graph...
         </p>
-        <span className="loading-subtext">Evaluating reverse dependencies via Spring Boot engine</span>
+        <span className="loading-subtext">Evaluating reverse dependencies across architectural call graph</span>
       </div>
     );
   }
 
   // 2. Empty State (No Service Selected)
   if (!proposedServiceId) {
+    const isDemo = Boolean(currentPresetName?.includes('Demo') || currentPresetName?.includes('Demonstration') || currentPresetName?.includes('E-Commerce'));
     return (
       <div className="impact-panel-card empty-state">
         <div className="empty-icon-wrap">
           <IconBarChart size={32} className="text-muted" />
         </div>
-        <h4 className="empty-title">Simulated Change Analysis</h4>
+        <h4 className="empty-title">Component Blast Radius Analysis</h4>
         <p className="empty-description">
-          Select a service from the simulation bar above or click any node in the dependency graph, then click <strong>Analyze Impact</strong> to evaluate its downstream blast radius.
+          Select a component from the control bar above or click any node in the dependency graph, then click <strong>Analyze Impact</strong> to evaluate its downstream blast radius.
         </p>
 
-        {/* Suggested Simulation Scenarios based on demonstration architecture */}
+        {/* Suggested Simulation Scenarios based on active architecture */}
         <div className="suggested-scenarios-card">
-          <span className="scenarios-heading">Suggested Demonstration Scenarios:</span>
+          <span className="scenarios-heading">Suggested Analysis Candidates:</span>
           <div className="scenario-chips-row">
-            <button
-              type="button"
-              className="scenario-chip"
-              onClick={() => onSelectService('Payment Service')}
-              title="Simulate change to Payment Service"
-            >
-              <strong>Payment Service</strong>
-              <span>3-4 affected (multi-tier)</span>
-            </button>
-            <button
-              type="button"
-              className="scenario-chip"
-              onClick={() => onSelectService('Order Service')}
-              title="Simulate change to Order Service"
-            >
-              <strong>Order Service</strong>
-              <span>2 affected (upstream core)</span>
-            </button>
-            <button
-              type="button"
-              className="scenario-chip"
-              onClick={() => onSelectService('Storefront Web')}
-              title="Simulate change to Storefront Web"
-            >
-              <strong>Storefront Web</strong>
-              <span>0 affected (leaf gateway)</span>
-            </button>
+            {services.slice(0, 3).map((svc) => (
+              <button
+                key={svc.id}
+                type="button"
+                className="scenario-chip"
+                onClick={() => onSelectService(svc.id)}
+                title={`Analyze change impact on ${svc.label || svc.id}`}
+              >
+                <strong>{svc.label || svc.id}</strong>
+                <span>{svc.tier || svc.type || 'Component'}</span>
+              </button>
+            ))}
           </div>
         </div>
 
         <div className="empty-tip-card">
-          <span className="empty-tip-badge">Note</span>
+          <span className="empty-tip-badge">Evidence Note</span>
           <span>
-            This tool evaluates simulated software changes against demonstration architectures — no live Git repository or production codebase is modified.
+            {isDemo
+              ? 'Evaluating reachability on the multi-tier reference architecture. Switch to Git Revision Comparison to analyze real repository diffs.'
+              : 'Blast radius is computed from static AST dependencies and exposed routes in this repository.'}
           </span>
         </div>
       </div>

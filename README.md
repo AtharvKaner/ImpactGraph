@@ -170,6 +170,16 @@ Open two PowerShell terminals: one for the backend and one for the frontend.
    ```
    *Backend starts at `http://localhost:8080` and connects to PostgreSQL using the configured credentials.*
 
+   **For the ready-to-use local demo (recommended for coursework):**
+   ```powershell
+   .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"
+   ```
+   This uses an in-memory H2 database and creates the local demo account:
+   `demo@impactgraph.io` / `DemoPassword123!`.
+   The account and demo topology exist only while that backend process is running.
+   The demo seeder is disabled by default outside the `dev` profile, so a normal
+   PostgreSQL or production startup does not create a known account.
+
 5. **Verify the health check directly in your browser or via curl:**
    ```powershell
    curl.exe http://localhost:8080/api/health

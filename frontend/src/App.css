@@ -4036,6 +4036,531 @@
   font-style: italic;
 }
 
+/* ==========================================================================
+   Animated Impact Visualization Toolbar & Progress Track
+   ========================================================================== */
+.animated-impact-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+.anim-ctrl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 5px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface-subtle);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.anim-ctrl-btn:hover:not(:disabled) {
+  background-color: var(--border-subtle);
+  transform: translateY(-1px);
+}
+
+.anim-ctrl-btn.primary {
+  background-color: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.anim-ctrl-btn.primary:hover:not(:disabled) {
+  background-color: #2563eb;
+}
+
+.anim-ctrl-btn.warning {
+  background-color: #f59e0b;
+  color: #fff;
+  border-color: #d97706;
+}
+
+.anim-ctrl-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.animation-progress-bar-wrap {
+  margin: 8px 16px 0 16px;
+  padding: 8px 12px;
+  background-color: var(--bg-surface-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.anim-progress-track {
+  width: 100%;
+  height: 6px;
+  background-color: var(--border-medium);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.anim-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ef4444);
+  transition: width 0.4s ease;
+}
+
+.anim-step-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.anim-step-desc strong {
+  color: var(--text-primary);
+  margin-right: 4px;
+}
+
+.anim-step-pct {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+/* ==========================================================================
+   Focus Mode Indicator Bar
+   ========================================================================== */
+.focus-mode-indicator-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background-color: rgba(59, 130, 246, 0.08);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.focus-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-exit-focus {
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid var(--border-medium);
+  border-radius: 4px;
+  background-color: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.btn-exit-focus:hover {
+  background-color: var(--bg-surface-subtle);
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   Floating Graph Controls & Legend
+   ========================================================================== */
+.graph-floating-legend {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background-color: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  z-index: 10;
+  font-size: 11.5px;
+}
+
+.service-node-tier {
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #64748b;
+  margin-top: 1px;
+}
+
+.service-node-api-pill {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #2563eb;
+  margin-top: 2px;
+}
+
+/* ==========================================================================
+   Collapsible Evidence Inspector Drawer
+   ========================================================================== */
+.drawer-evidence-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.evidence-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.impact-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.impact-badge.badge-direct {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.impact-badge.badge-transitive {
+  background-color: rgba(139, 92, 246, 0.15);
+  color: #7c3aed;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.evidence-conf-pill {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.drawer-explanation-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.evidence-item-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.evidence-key {
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.evidence-val-code {
+  font-family: monospace;
+  font-size: 11.5px;
+  background-color: var(--bg-surface-subtle);
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+}
+
+.evidence-val-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.evidence-steps-block,
+.evidence-tests-block {
+  font-size: 12px;
+}
+
+.evidence-steps-block strong,
+.evidence-tests-block strong {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.evidence-steps-block ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+}
+
+.test-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.test-chip-item {
+  font-size: 11px;
+  font-family: monospace;
+  background-color: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.evidence-disclaimer {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background-color: rgba(245, 158, 11, 0.08);
+  border-left: 3px solid #f59e0b;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-radius: 0 4px 4px 0;
+}
+
+/* ==========================================================================
+   Top-Level Prominent Security Summary Banner in Overview
+   ========================================================================== */
+.overview-security-top-summary {
+  background: linear-gradient(135deg, rgba(254, 242, 242, 0.7) 0%, rgba(255, 255, 255, 0.95) 100%);
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.08);
+  margin-bottom: 20px;
+}
+
+.security-top-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.security-top-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.security-shield-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background-color: #fee2e2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.security-top-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #991b1b;
+}
+
+.security-top-sub {
+  margin: 2px 0 0 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.btn-view-all-security {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  background-color: #b91c1c;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.btn-view-all-security:hover {
+  background-color: #991b1b;
+}
+
+.security-top-metrics-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(239, 68, 68, 0.15);
+}
+
+.sec-metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sec-metric-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.sec-metric-val {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.sec-metric-val.status-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #059669;
+}
+
+.security-top-findings-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.chips-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.top-finding-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: #ffffff;
+  border: 1px solid #fecaca;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.top-finding-chip:hover {
+  border-color: #ef4444;
+}
+
+.chip-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.chip-comp {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.security-empty-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: #059669;
+}
+
+/* ==========================================================================
+   Primary Workflow Guidance Card in Overview
+   ========================================================================== */
+.overview-workflow-guide-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.workflow-guide-title {
+  margin: 0 0 12px 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.workflow-steps-track {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.workflow-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 6px;
+  background-color: var(--bg-surface-subtle);
+  border: 1px solid var(--border-subtle);
+}
+
+.workflow-step.active {
+  border-color: var(--primary);
+  background-color: rgba(59, 130, 246, 0.05);
+}
+
+.step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background-color: var(--border-strong);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.workflow-step.active .step-num {
+  background-color: var(--primary);
+}
+
+.step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.step-content strong {
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.step-content span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+
 
 
 

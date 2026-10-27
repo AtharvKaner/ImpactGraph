@@ -36,16 +36,23 @@ export function ImpactStudioView({
 
   // Available architecture tiers
   const tiers = useMemo(() => ['ALL', ...new Set(services.map((service) => service.tier || 'Other'))], [services]);
-  const isDemoProject = Boolean(graphData?.name?.includes('[Demo]'));
+  const isDemoProject = Boolean(
+    graphData?.name?.includes('[Demo]') ||
+    graphData?.name?.includes('E-Commerce') ||
+    (!selectedProjectId && currentPreset === 'ecommerce-dag') ||
+    (selectedProjectId && projects.find((p) => p.id === selectedProjectId)?.name?.includes('[Demo]'))
+  );
 
   // Effective graph impact result based on active mode
   const effectiveGraphImpactResult = useMemo(() => {
     if (analysisMode === 'revision' && revisionBlastRadius) {
       return {
-        directlyChangedServices: revisionBlastRadius.directlyImpactedServices || [],
-        directAffectedServices: revisionBlastRadius.directlyImpactedServices || [],
-        transitiveAffectedServices: revisionBlastRadius.transitivelyImpactedServices || [],
+        directlyChangedServices: revisionBlastRadius.directlyChangedServices || revisionBlastRadius.directlyImpactedServices || [],
+        directAffectedServices: revisionBlastRadius.directlyAffectedServices || revisionBlastRadius.directlyImpactedServices || [],
+        transitiveAffectedServices: revisionBlastRadius.transitivelyAffectedServices || revisionBlastRadius.transitivelyImpactedServices || [],
         impactPaths: revisionBlastRadius.impactPaths || [],
+        impactedApis: revisionBlastRadius.impactedApis || [],
+        explanations: revisionBlastRadius.explanations || [],
       };
     }
     return impactResult;
@@ -66,6 +73,15 @@ export function ImpactStudioView({
     if (!inspectedNodeId) return null;
     return services.find((s) => s.id === inspectedNodeId);
   }, [services, inspectedNodeId]);
+
+  // Find structured explanation from backend if available
+  const inspectedExplanation = useMemo(() => {
+    if (!inspectedService) return null;
+    const list = effectiveGraphImpactResult?.explanations || [];
+    return list.find(
+      (e) => e.targetId === inspectedService.id || e.targetId === inspectedService.label
+    );
+  }, [effectiveGraphImpactResult, inspectedService]);
 
   const handleNodeClick = (nodeId) => {
     onSelectService(nodeId);
@@ -121,7 +137,7 @@ export function ImpactStudioView({
           className="btn-run-guided-workflow"
           onClick={() => {
             onSelectService('Payment Service');
-            onAnalyze();
+            onAnalyze('Payment Service');
           }}
           disabled={impactLoading}
           title="Select Payment Service and execute blast radius simulation"
@@ -207,9 +223,11 @@ export function ImpactStudioView({
             analyzedServiceId={analyzedServiceId}
             impactResult={effectiveGraphImpactResult}
             onNodeClick={handleNodeClick}
+            datasetKey={selectedProjectId ? `project-${selectedProjectId}` : currentPreset}
+            impactExplanations={effectiveGraphImpactResult?.explanations || []}
           />
 
-          {/* Collapsible Inspected Node Details Drawer */}
+          {/* Collapsible Inspected Node Details & Evidence Drawer */}
           {inspectedService && (
             <div className="node-inspector-drawer">
               <div className="drawer-header">
@@ -231,32 +249,90 @@ export function ImpactStudioView({
                   &times;
                 </button>
               </div>
+
               <div className="drawer-body">
-                <p className="drawer-desc">{inspectedService.description || 'No description provided.'}</p>
-                <div className="drawer-stats">
-                  <div className="drawer-stat-item">
-                    <span className="stat-label">Role in Simulation:</span>
-                    <span className="stat-val">
-                      {proposedServiceId === inspectedService.id ? (
-                        <strong className="text-amber">Selected Change Target</strong>
-                      ) : (
-                        'Dependency Node'
-                      )}
-                    </span>
+                {inspectedExplanation ? (
+                  <div className="drawer-evidence-block">
+                    <div className="evidence-badge-row">
+                      <span className={`impact-badge badge-${inspectedExplanation.impactType.toLowerCase()}`}>
+                        {inspectedExplanation.impactType} Impact
+                      </span>
+                      <span className="evidence-conf-pill">Confidence: {inspectedExplanation.confidence}</span>
+                    </div>
+
+                    <p className="drawer-explanation-text">
+                      {inspectedExplanation.explanation}
+                    </p>
+
+                    <div className="evidence-item-row">
+                      <span className="evidence-key">Dependency Path:</span>
+                      <code className="evidence-val-code">{inspectedExplanation.pathString}</code>
+                    </div>
+
+                    <div className="evidence-item-row">
+                      <span className="evidence-key">Source Evidence:</span>
+                      <span className="evidence-val-text">{inspectedExplanation.sourceEvidence}</span>
+                    </div>
+
+                    {inspectedExplanation.recommendedVerificationSteps?.length > 0 && (
+                      <div className="evidence-steps-block">
+                        <strong>Recommended Verification Steps:</strong>
+                        <ul>
+                          {inspectedExplanation.recommendedVerificationSteps.map((step, idx) => (
+                            <li key={idx}>{step}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {inspectedExplanation.relevantTests?.length > 0 && (
+                      <div className="evidence-tests-block">
+                        <strong>Targeted Regression Tests:</strong>
+                        <div className="test-chips-row">
+                          {inspectedExplanation.relevantTests.map((t, idx) => (
+                            <code key={idx} className="test-chip-item">{t}</code>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="evidence-disclaimer">
+                      <span>
+                        {inspectedExplanation.isPotentialImpactOnly
+                          ? '⚠️ Potential Impact: Derived from dependency call reachability. Static dependencies indicate execution flow; actual defect occurrence requires regression testing.'
+                          : '🎯 Root Modification: Source code in this component was directly altered between compared revisions.'}
+                      </span>
+                    </div>
                   </div>
-                  <div className="drawer-stat-item">
-                    <span className="stat-label">Incoming Dependents:</span>
-                    <span className="stat-val">
-                      {dependencies.filter((d) => (d.target || d.targetServiceName) === inspectedService.id).length} services
-                    </span>
-                  </div>
-                  <div className="drawer-stat-item">
-                    <span className="stat-label">Outgoing Dependencies:</span>
-                    <span className="stat-val">
-                      {dependencies.filter((d) => (d.source || d.sourceServiceName) === inspectedService.id).length} services
-                    </span>
-                  </div>
-                </div>
+                ) : (
+                  <>
+                    <p className="drawer-desc">{inspectedService.description || 'Architectural component derived from source code analysis.'}</p>
+                    <div className="drawer-stats">
+                      <div className="drawer-stat-item">
+                        <span className="stat-label">Role in Simulation:</span>
+                        <span className="stat-val">
+                          {proposedServiceId === inspectedService.id ? (
+                            <strong className="text-amber">Selected Change Target</strong>
+                          ) : (
+                            'Dependency Node'
+                          )}
+                        </span>
+                      </div>
+                      <div className="drawer-stat-item">
+                        <span className="stat-label">Incoming Dependents:</span>
+                        <span className="stat-val">
+                          {dependencies.filter((d) => (d.target || d.targetServiceName) === inspectedService.id).length} services
+                        </span>
+                      </div>
+                      <div className="drawer-stat-item">
+                        <span className="stat-label">Outgoing Dependencies:</span>
+                        <span className="stat-val">
+                          {dependencies.filter((d) => (d.source || d.sourceServiceName) === inspectedService.id).length} services
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}

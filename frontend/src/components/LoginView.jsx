@@ -203,16 +203,21 @@ export function LoginView({ onLoginSuccess, healthData = null }) {
               </div>
               <span className="demo-btn-arrow">&rarr;</span>
             </button>
+
+            <p className="login-demo-credentials">
+              Local demo sign-in: <strong>demo@impactgraph.io</strong> / <strong>DemoPassword123!</strong>
+              <br />Start the backend with the <code>dev</code> profile to create this local-only account.
+            </p>
           </form>
 
           {/* Footer Security Badges */}
           <div className="login-card-footer">
             <div className="login-footer-security">
               <IconCheckShield size={14} className="text-primary" />
-              <span>JWT Bearer Token Authentication with Spring Security RBAC</span>
+              <span>Secure Role-Based Authentication &amp; Access Control</span>
             </div>
             <div className="login-backend-status-line">
-              <span>Backend API (Port 8080):</span>
+              <span>Analysis Engine:</span>
               <span className={`backend-indicator ${isBackendOnline ? 'online' : 'offline'}`}>
                 ● {isBackendOnline ? 'Service Online' : 'Connecting / Standby'}
               </span>
